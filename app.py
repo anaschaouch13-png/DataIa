@@ -1,70 +1,58 @@
 # ================== 1. Imports ==================
+import datetime
+import logging
 import os
-import re
+import sys
 from functools import wraps
-from io import BytesIO
 
-import mysql.connector
 import pandas as pd
-import requests
-from flask import (Flask, flash, jsonify, make_response, redirect,
-                   render_template, request, send_file, url_for)
+from flask import (Flask, abort, flash, jsonify, redirect, render_template,
+                   request, send_file, url_for)
 from flask_login import (LoginManager, UserMixin, current_user, login_required,
                          login_user, logout_user)
 from fpdf import FPDF
 from werkzeug.security import check_password_hash, generate_password_hash
 from werkzeug.utils import secure_filename
 
-from config_ia import OLLAMA_CONFIG, SYSTEM_PROMPT, RAG_TOP_K
-from ollama_rag import (
-    OllamaNomicEmbeddings,
-    load_or_build_vector_store,
-    delete_vector_store,
-    call_ollama_chat
-)
+import config
+from services import rag
+from services.db import get_db_connection
+from services.langue import analyser_question, message
+from services.llm import (OllamaIndisponibleError, generer_reponse,
+                          verifier_ollama)
+from services.parsers import charger_dataframe
+from services.prompts import prompt_systeme_rag, prompt_utilisateur_rag
 
 # ================== 2. Config ==================
+# Console Windows en cp1252 : sans cela, un print/log contenant de l'arabe
+# fait planter la requête (UnicodeEncodeError constaté pendant les tests).
+for _flux in (sys.stdout, sys.stderr):
+    try:
+        _flux.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(name)s] %(levelname)s %(message)s")
+log = logging.getLogger("dataia")
+
 app = Flask(__name__)
-app.config['SECRET_KEY'] = 'ma_cle_secrete_123'
-app.config['UPLOAD_FOLDER'] = 'uploads'
-
-if not os.path.exists(app.config['UPLOAD_FOLDER']):
-    os.makedirs(app.config['UPLOAD_FOLDER'])
-
-_embed_model = None
+app.config['SECRET_KEY'] = config.SECRET_KEY          # lu depuis .env (plus de clé en dur)
+app.config['UPLOAD_FOLDER'] = config.UPLOAD_FOLDER
+app.config['MAX_CONTENT_LENGTH'] = config.MAX_UPLOAD_MB * 1024 * 1024
 
 
-def get_embeddings():
-    global _embed_model
-    if _embed_model is None:
-        try:
-            _embed_model = OllamaNomicEmbeddings()
-        except Exception as e:
-            print(f"[Avertissement] Embeddings Ollama indisponibles : {e}")
-            return None
-    return _embed_model
+def chemin_absolu(chemin: str) -> str:
+    """Les chemins sont stockés en base relativement au dossier du backend (ex. uploads\\x.csv)."""
+    chemin = chemin.replace('\\', os.sep)
+    return chemin if os.path.isabs(chemin) else os.path.join(config.BASE_DIR, chemin)
 
 
-def get_db_connection():
-    return mysql.connector.connect(
-        host="localhost",
-        user="root",
-        password="",
-        database="dataia"
-    )
+def chemin_relatif(chemin: str) -> str:
+    """Chemin à enregistrer en base (relatif au backend : le projet reste déplaçable)."""
+    return os.path.relpath(chemin, config.BASE_DIR)
 
 
-def load_dataset(path: str) -> pd.DataFrame:
-    """Charge un fichier CSV ou Excel en détectant automatiquement le séparateur."""
-    if path.endswith('.csv'):
-        try:
-            return pd.read_csv(path, sep=None, engine='python', encoding='utf-8-sig')
-        except Exception:
-            try:
-                return pd.read_csv(path, sep=';', encoding='utf-8-sig')
-            except Exception:
-                return pd.read_csv(path)
-    return pd.read_excel(path)
+load_dataset = charger_dataframe  # alias conservé pour le code existant
 
 
 # ================== 3. Login Manager & User Class ==================
@@ -90,7 +78,8 @@ def load_user(user_id):
     user_data = cursor.fetchone()
     cursor.close()
     conn.close()
-    if user_data:
+    # Un compte bloqué par l'admin perd immédiatement sa session (avant : il restait connecté)
+    if user_data and not user_data.get('est_bloque'):
         return User(user_data['id_utilisateur'], user_data['nom_utilisateur'],
                     user_data['email'], user_data['mot_de_passe'],
                     user_data['role'], user_data['est_bloque'])
@@ -208,87 +197,98 @@ def chat(file_id):
 # ================== Route ask_ia (Version Finale Complète) ==================
 
 
+def resume_categories(df: pd.DataFrame, max_valeurs: int = 35) -> str:
+    """Valeurs distinctes des colonnes texte (aide le LLM sur les catégories / villes)."""
+    lignes = []
+    for c in df.select_dtypes(include=['object', 'string', 'category']).columns:
+        uniques = [str(v) for v in df[c].dropna().unique()[:max_valeurs]]
+        lignes.append(f"- {c} : {', '.join(uniques)}")
+    return "\n".join(lignes) if lignes else "Aucune colonne catégorielle"
+
+
 @app.route('/ask_ia', methods=['POST'])
 @login_required
 def ask_ia():
+    data = request.get_json(silent=True) or {}
+    file_id = data.get('file_id')
+    question = (data.get('question') or '').strip()
+
+    # 1. Langue : détection + traduction de la derja (services/langue.py)
+    analyse = analyser_question(question)
+    langue = analyse.langue_reponse
+
+    if not question:
+        return jsonify({"status": "error", "message": "Question vide."}), 400
+
+    conn = get_db_connection()
+    cursor = conn.cursor(dictionary=True)
     try:
-        data = request.get_json()
-        file_id = data.get('file_id')
-        user_question = data.get('question')
-
-        conn = get_db_connection()
-        cursor = conn.cursor(dictionary=True)
-        cursor.execute("SELECT * FROM fichiers WHERE id_fichier = %s", (file_id,))
+        # 2. Sécurité : le fichier doit appartenir à l'utilisateur connecté
+        #    (avant : n'importe quel id_fichier était accepté -> fuite de données)
+        cursor.execute("SELECT * FROM fichiers WHERE id_fichier = %s AND id_utilisateur = %s",
+                       (file_id, current_user.id))
         fichier = cursor.fetchone()
-
         if not fichier:
-            conn.close()
-            return jsonify({"status": "error", "message": "Fichier introuvable"}), 404
+            return jsonify({"status": "error", "message": message("fichier_introuvable", langue)}), 404
 
-        path = fichier['chemin_fichier']
-        df = load_dataset(path)
+        chemin = chemin_absolu(fichier['chemin_fichier'])
+        if not os.path.isfile(chemin):
+            return jsonify({"status": "error",
+                            "message": message("fichier_absent_disque", langue, nom=fichier['nom_fichier'])}), 410
 
-        cols = df.columns.tolist()
-        summary_stats = df.describe(include='all').to_string()
-        head_data = df.head(5).to_string()
+        df = load_dataset(chemin)
 
-        # Aperçu des valeurs uniques des colonnes textuelles (pour aider le modèle sur les catégories / villes)
-        cat_info = []
-        for c in df.select_dtypes(include=['object']).columns:
-            uniques = [str(v) for v in df[c].dropna().unique()[:35]]
-            cat_info.append(f"- {c} : {', '.join(uniques)}")
-        cat_summary = "\n".join(cat_info) if cat_info else "Aucune colonne catégorielle"
+        # 3. RAG : recherche des lignes les plus proches de la question
+        textes = rag.lignes_en_textes(df)
+        index = rag.charger_ou_construire_index(int(file_id), textes)
+        extraits = rag.rechercher(index, analyse.question_pour_llm, nb_lignes=len(textes))
 
-        texts = df.astype(str).apply(lambda x: " | ".join(f"{col}: {val}" for col, val in x.items()), axis=1).tolist()
+        # 4. Génération de la réponse par le LLM local, dans la langue de l'utilisateur
+        prompt_user = prompt_utilisateur_rag(
+            colonnes=df.columns.tolist(),
+            valeurs_categories=resume_categories(df),
+            stats=df.describe(include='all').to_string(),
+            extraits="\n".join(f"- {e}" for e in extraits),
+            question=analyse.question_pour_llm,
+            langue_reponse=langue,
+        )
+        reponse = generer_reponse(prompt_systeme_rag(langue), prompt_user)
+        if analyse.avertissement:
+            reponse = f"{analyse.avertissement}\n\n{reponse}"
 
-        embed_model = get_embeddings()
-        try:
-            vector_store = load_or_build_vector_store(
-                file_id=file_id,
-                texts=texts,
-                embed_model=embed_model,
-                upload_folder=app.config['UPLOAD_FOLDER']
-            )
-            # Sélection des extraits les plus pertinents
-            k_val = min(len(texts), max(RAG_TOP_K, 8))
-            relevant_docs = vector_store.similarity_search(user_question, k=k_val)
-            context = "\n".join([f"- {doc.page_content}" for doc in relevant_docs])
-        except Exception as e:
-            print(f"[RAG] Avertissement recherche vectorielle ({e}), repli sur extrait tabulaire.")
-            context = "\n".join([f"- {t}" for t in texts[:RAG_TOP_K]])
+        # 5. Historique : on enregistre la question telle que l'utilisateur l'a écrite
+        cursor.execute("INSERT INTO questions (id_utilisateur, id_fichier, question_texte, reponse_texte, date_question) "
+                       "VALUES (%s, %s, %s, %s, NOW())",
+                       (current_user.id, file_id, question, reponse))
+        conn.commit()
+        return jsonify({"status": "success", "answer": reponse,
+                        "langue": analyse.langue, "langue_reponse": langue})
 
-        # Prompt concis et précis adapté au modèle 3B
-        prompt_final = f"""COLONNES DISPONIBLES :
-{cols}
+    except OllamaIndisponibleError as e:
+        # Ollama arrêté ou modèle absent : message clair, code 503, pas de crash
+        log.warning("Ollama indisponible : %s", e)
+        return jsonify({"status": "error", "code": "ollama_indisponible",
+                        "message": message(e.cle_message, langue, modele=e.modele)}), 503
+    except Exception:
+        log.exception("Erreur dans /ask_ia")
+        return jsonify({"status": "error", "message": message("erreur_interne", langue)}), 500
+    finally:
+        cursor.close()
+        conn.close()
 
-VALEURS PRÉSENTES PAR COLONNE :
-{cat_summary}
 
-STATISTIQUES GLOBALES :
-{summary_stats}
-
-EXTRAITS DU FICHIER (RAG) :
-{context}
-
-QUESTION UTILISATEUR : {user_question}
-"""
-        print('prompt_final', prompt_final)
-
-        # Appel à Ollama local (qwen2.5:3b)
-        answer = call_ollama_chat(prompt_final)
-
-        if answer:
-            cursor.execute("INSERT INTO questions (id_utilisateur, id_fichier, question_texte, reponse_texte, date_question) VALUES (%s, %s, %s, %s, NOW())",
-                           (current_user.id, file_id, user_question, answer))
-            conn.commit()
-            cursor.close()
-            conn.close()
-            return jsonify({"status": "success", "answer": answer})
-
-        return jsonify({"status": "error", "message": "Erreur lors de la communication avec le modèle Ollama local"}), 500
-
-    except Exception as e:
-        return jsonify({"status": "error", "message": str(e)}), 500
+@app.route('/api/sante')
+def api_sante():
+    """État des services (Ollama + modèles, MySQL) : utile pour le diagnostic et le frontend."""
+    etat_ollama = verifier_ollama()
+    try:
+        conn = get_db_connection()
+        conn.close()
+        mysql_ok = True
+    except Exception:
+        mysql_ok = False
+    return jsonify({"ollama": etat_ollama["ok"], "modeles_manquants": etat_ollama["manquants"],
+                    "mysql": mysql_ok}), (200 if etat_ollama["ok"] and mysql_ok else 503)
 
 # ================== Route export_pdf ==================
 
@@ -340,18 +340,10 @@ def export_pdf():
         pdf.set_font("helvetica", "I", 11)
         pdf.multi_cell(0, 10, txt=clean_text(conseil), border=1)
 
-        # 2. Gestion du stockage physique sur le serveur
-        import datetime
+        # 2. Gestion du stockage physique sur le serveur (dossier défini dans config.py)
         timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
         filename = f"Rapport_U{current_user.id}_{timestamp}.pdf"
-
-        # Vérification et création du dossier de destination si inexistant
-        report_folder = os.path.join(app.config['UPLOAD_FOLDER'], 'rapports')
-        if not os.path.exists(report_folder):
-            os.makedirs(report_folder)
-
-        # Chemin complet pour sauvegarder le fichier PDF
-        report_path = os.path.join(report_folder, filename)
+        report_path = os.path.join(config.REPORT_FOLDER, filename)
         pdf.output(report_path)
 
         # 3. Enregistrement des métadonnées dans la table 'rapports' (selon ton image)
@@ -362,7 +354,7 @@ def export_pdf():
             VALUES (%s, %s, %s, NOW())
         """
         # On insère un extrait du texte et le chemin physique du fichier
-        cursor.execute(query, (question_id, clean_text(history[:500]), report_path))
+        cursor.execute(query, (question_id, clean_text(history[:500]), chemin_relatif(report_path)))
 
         conn.commit()
         cursor.close()
@@ -401,13 +393,20 @@ def upload_file():
         return redirect(url_for('dashboard'))
     if file:
         filename = secure_filename(file.filename)
-        path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+        if not filename.lower().endswith(('.csv', '.xls', '.xlsx')):
+            flash('Format non supporté (CSV ou Excel uniquement).', 'danger')
+            return redirect(url_for('dashboard'))
+        # Nom unique sur le disque : avant, deux utilisateurs envoyant "ventes.csv"
+        # écrasaient le fichier l'un de l'autre (cas réel : fichiers 29 et 30).
+        horodatage = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        nom_disque = f"U{current_user.id}_{horodatage}_{filename}"
+        path = os.path.join(config.UPLOAD_FOLDER, nom_disque)
         file.save(path)
-        file_type = 'Excel' if filename.endswith(('.xls', '.xlsx')) else 'CSV'
+        file_type = 'Excel' if filename.lower().endswith(('.xls', '.xlsx')) else 'CSV'
         conn = get_db_connection()
         cursor = conn.cursor()
         cursor.execute("INSERT INTO fichiers (id_utilisateur, nom_fichier, chemin_fichier, type_fichier) VALUES (%s, %s, %s, %s)",
-                       (current_user.id, filename, path, file_type))
+                       (current_user.id, filename, chemin_relatif(path), file_type))
         conn.commit()
         cursor.close()
         conn.close()
@@ -424,9 +423,15 @@ def delete_file(file_id):
                    (file_id, current_user.id))
     fichier = cursor.fetchone()
     if fichier:
-        if os.path.exists(fichier['chemin_fichier']):
-            os.remove(fichier['chemin_fichier'])
-        delete_vector_store(app.config['UPLOAD_FOLDER'], file_id)
+        # Anciennes lignes : plusieurs fichiers peuvent pointer vers le même chemin disque.
+        # On ne supprime le fichier physique que s'il n'est plus référencé ailleurs.
+        cursor.execute("SELECT COUNT(*) AS n FROM fichiers WHERE chemin_fichier = %s AND id_fichier <> %s",
+                       (fichier['chemin_fichier'], file_id))
+        partage = cursor.fetchone()['n'] > 0
+        chemin = chemin_absolu(fichier['chemin_fichier'])
+        if not partage and os.path.isfile(chemin):
+            os.remove(chemin)
+        rag.supprimer_index(file_id)
         cursor.execute("DELETE FROM fichiers WHERE id_fichier = %s", (file_id,))
         conn.commit()
     cursor.close()
@@ -489,19 +494,43 @@ def admin_dashboard():
 @app.route('/view_report/<path:filename>')
 @login_required
 def view_report(filename):
-    try:
-        return send_file(filename)
-    except Exception as e:
-        return f"Fichier introuvable: {str(e)}"
+    """
+    Envoie un rapport PDF.
+    Sécurité (avant : send_file(filename) envoyait N'IMPORTE QUEL fichier du disque,
+    ex. /view_report/C:/Windows/win.ini ou ../.env) :
+      1. le chemin doit être enregistré dans la table `rapports` ;
+      2. un utilisateur ne voit que ses rapports (l'admin voit tout) ;
+      3. le fichier doit se trouver dans le dossier des rapports.
+    """
+    conn = get_db_connection()
+    cursor = conn.cursor(dictionary=True)
+    cursor.execute("""
+        SELECT r.chemin_resume, q.id_utilisateur
+        FROM rapports r LEFT JOIN questions q ON r.id_question = q.id_question
+        WHERE r.chemin_resume = %s
+    """, (filename,))
+    rapport = cursor.fetchone()
+    cursor.close()
+    conn.close()
+
+    if not rapport:
+        abort(404)
+    if current_user.role != 'administrateur' and rapport['id_utilisateur'] != current_user.id:
+        abort(403)
+
+    chemin = os.path.realpath(chemin_absolu(rapport['chemin_resume']))
+    dossier = os.path.realpath(config.REPORT_FOLDER)
+    if os.path.commonpath([chemin, dossier]) != dossier or not os.path.isfile(chemin):
+        abort(404)
+    return send_file(chemin, mimetype='application/pdf')
 
 # 1. Route pour supprimer un utilisateur
 
 
 @app.route('/admin/delete_user/<int:user_id>', methods=['POST'])
 @login_required
+@admin_required
 def delete_user(user_id):
-    if current_user.role != 'administrateur':
-        return "Accès refusé", 403
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
@@ -523,6 +552,7 @@ def delete_user(user_id):
 
 @app.route('/admin/toggle_user/<int:user_id>', methods=['POST'])
 @login_required
+@admin_required   # avant : n'importe quel utilisateur connecté pouvait bloquer un compte (même l'admin)
 def toggle_user(user_id):
     try:
         conn = get_db_connection()
@@ -550,4 +580,10 @@ def logout():
 
 
 if __name__ == '__main__':
-    app.run(debug=True)
+    # debug lu depuis .env (FLASK_DEBUG=1) : le débogueur Werkzeug permet d'exécuter
+    # du code à distance, il ne doit pas être activé par défaut.
+    etat = verifier_ollama()
+    if not etat["ok"]:
+        log.warning("Ollama indisponible ou modèles manquants %s : le chat affichera un message d'erreur.",
+                    etat["manquants"])
+    app.run(debug=config.FLASK_DEBUG)

@@ -1,161 +1,98 @@
 #!/usr/bin/env python3
 """
-reindex.py
-Script de réindexation du Vector Store pour le projet DataIA.
-- Supprime les anciens index vectoriels incompatibles (dimension != 768)
-- Réindexe les fichiers (CSV / Excel) avec Ollama (nomic-embed-text)
-- Applique le préfixe requis 'search_document: '
-- Sauvegarde les index FAISS avec dimension 768
+reindex.py — Réindexation FAISS de tous les fichiers existants.
+
+Pourquoi ? Le passage à nomic-embed-text change la dimension des vecteurs (768).
+Un index construit avec un autre modèle d'embeddings est incompatible : il faut
+recalculer les vecteurs de toutes les lignes avec le préfixe "search_document: ".
+
+Usage (depuis le dossier DataIa, venv activé) :
+    python reindex.py              # reconstruit tous les index
+    python reindex.py --no-force   # ne reconstruit que les index absents ou invalides
+
+Les fichiers référencés en base mais absents du disque sont signalés (pas supprimés).
 """
 
+import argparse
 import os
 import sys
-import argparse
-import pandas as pd
-import mysql.connector
+import time
 
-from config_ia import OLLAMA_BASE_URL, OLLAMA_EMBED_MODEL, RAG_TOP_K
-from ollama_rag import (
-    OllamaNomicEmbeddings,
-    load_or_build_vector_store,
-    get_vector_store_dir,
-    EXPECTED_EMBEDDING_DIM
-)
-
-
-def get_db_connection():
-    """Connexion optionnelle à la base de données DataIA."""
+for _flux in (sys.stdout, sys.stderr):
     try:
-        return mysql.connector.connect(
-            host="localhost",
-            user="root",
-            password="",
-            database="dataia"
-        )
+        _flux.reconfigure(encoding="utf-8", errors="replace")
     except Exception:
-        return None
+        pass
+
+import config
+from services import rag
+from services.db import get_db_connection
+from services.llm import OllamaIndisponibleError, get_embeddings
+from services.parsers import charger_dataframe
 
 
-def get_files_to_index(upload_folder="uploads"):
-    """
-    Récupère la liste des fichiers à indexer.
-    Tente la base de données en premier, sinon parcourt le dossier uploads.
-    """
-    files = []
-    conn = get_db_connection()
-    if conn:
-        try:
-            cursor = conn.cursor(dictionary=True)
-            cursor.execute("SELECT id_fichier, nom_fichier, chemin_fichier FROM fichiers")
-            rows = cursor.fetchall()
-            for r in rows:
-                if os.path.exists(r['chemin_fichier']):
-                    files.append(r)
-            cursor.close()
-            conn.close()
-            if files:
-                print(f"[Info] {len(files)} fichier(s) trouvé(s) depuis la base de données.")
-                return files
-        except Exception as e:
-            print(f"[Avertissement] Erreur lecture DB ({e}), bascule sur le dossier uploads.")
-
-    # Fallback : scan direct du dossier uploads
-    if os.path.exists(upload_folder):
-        file_id = 1
-        for fname in os.listdir(upload_folder):
-            fpath = os.path.join(upload_folder, fname)
-            if os.path.isfile(fpath) and fname.lower().endswith(('.csv', '.xlsx', '.xls')):
-                files.append({
-                    "id_fichier": file_id,
-                    "nom_fichier": fname,
-                    "chemin_fichier": fpath
-                })
-                file_id += 1
-        print(f"[Info] {len(files)} fichier(s) trouvé(s) dans le dossier {upload_folder}.")
-
-    return files
+def chemin_absolu(chemin: str) -> str:
+    chemin = chemin.replace('\\', os.sep)
+    return chemin if os.path.isabs(chemin) else os.path.join(config.BASE_DIR, chemin)
 
 
-def reindex_all(upload_folder="uploads", force=True):
-    print("=" * 60)
-    print("        RÉINDEXATION DU VECTOR STORE DATAIA (OLLAMA)")
-    print("=" * 60)
-    print(f"URL Ollama       : {OLLAMA_BASE_URL}")
-    print(f"Modèle Embedding : {OLLAMA_EMBED_MODEL}")
-    print(f"Dimension cible  : {EXPECTED_EMBEDDING_DIM}")
-    print("=" * 60)
+def reindexer_tout(forcer: bool = True) -> int:
+    print("=" * 64)
+    print("  RÉINDEXATION FAISS — DataIA")
+    print(f"  Ollama : {config.OLLAMA_BASE_URL} | embeddings : {config.OLLAMA_EMBED_MODEL} "
+          f"| dimension attendue : {config.EMBEDDING_DIM}")
+    print("=" * 64)
 
-    # 1. Vérification de l'accès à Ollama
-    embed_model = OllamaNomicEmbeddings()
-    print("\n[1/3] Verification de la connexion a Ollama...")
+    # 1. Ollama joignable et dimension correcte ?
     try:
-        test_vec = embed_model.embed_query("test de connexion")
-        dim = len(test_vec)
-        print(f"[OK] Connexion reussie a Ollama ! Dimension retournee : {dim}")
-        if dim != EXPECTED_EMBEDDING_DIM:
-            print(f"[!] Attention : La dimension recue ({dim}) differe de {EXPECTED_EMBEDDING_DIM}.")
-    except Exception as e:
-        print(f"[ERREUR] Impossible de contacter Ollama sur {OLLAMA_BASE_URL} : {e}")
-        print("Assurez-vous qu'Ollama est demarre ('ollama serve') et que le modele 'nomic-embed-text' est installe :")
-        print("  ollama pull nomic-embed-text")
-        sys.exit(1)
+        dim = len(get_embeddings().embed_query("test"))
+    except OllamaIndisponibleError as e:
+        print(f"[ERREUR] {e}\n  -> Lancez Ollama ('ollama serve') puis 'ollama pull {config.OLLAMA_EMBED_MODEL}'.")
+        return 1
+    print(f"[OK] Ollama répond, dimension des vecteurs = {dim}")
+    if dim != config.EMBEDDING_DIM:
+        print(f"[ERREUR] Dimension {dim} différente de EMBEDDING_DIM={config.EMBEDDING_DIM} (.env).")
+        return 1
 
-    # 2. Récupération des fichiers
-    print("\n[2/3] Recherche des fichiers a indexer...")
-    files = get_files_to_index(upload_folder)
-    if not files:
-        print("Aucun fichier de donnees (CSV ou Excel) trouve a indexer.")
-        return
+    # 2. Fichiers enregistrés en base
+    conn = get_db_connection()
+    cur = conn.cursor(dictionary=True)
+    cur.execute("SELECT id_fichier, id_utilisateur, nom_fichier, chemin_fichier FROM fichiers ORDER BY id_fichier")
+    fichiers = cur.fetchall()
+    cur.close()
+    conn.close()
 
-    # 3. Réindexation fichier par fichier
-    print(f"\n[3/3] Reindexation de {len(files)} fichier(s)...")
-    success_count = 0
-    for f in files:
-        file_id = f["id_fichier"]
-        name = f["nom_fichier"]
-        path = f["chemin_fichier"]
-        print(f"\n- Traitement de [ID {file_id}] '{name}'...")
-
+    ok, absents, erreurs = 0, [], []
+    for f in fichiers:
+        chemin = chemin_absolu(f["chemin_fichier"])
+        etiquette = f"[ID {f['id_fichier']}] {f['nom_fichier']} (utilisateur {f['id_utilisateur']})"
+        if not os.path.isfile(chemin):
+            absents.append(etiquette)
+            print(f"  [ABSENT] {etiquette} -> {f['chemin_fichier']} introuvable sur le disque")
+            continue
         try:
-            # Lecture du fichier avec détection automatique du séparateur (; ou ,)
-            if path.endswith('.csv'):
-                try:
-                    df = pd.read_csv(path, sep=None, engine='python', encoding='utf-8-sig')
-                except Exception:
-                    df = pd.read_csv(path, sep=';', encoding='utf-8-sig')
-            else:
-                df = pd.read_excel(path)
-            texts = df.astype(str).apply(
-                lambda x: " | ".join(f"{col}: {val}" for col, val in x.items()),
-                axis=1
-            ).tolist()
-
-            if not texts:
-                print(f"  [!] Fichier vide ou sans lignes, ignore.")
-                continue
-
-            print(f"  Generation des embeddings pour {len(texts)} lignes (prefixe 'search_document: ')...")
-            vs = load_or_build_vector_store(
-                file_id=file_id,
-                texts=texts,
-                embed_model=embed_model,
-                upload_folder=upload_folder,
-                force_rebuild=force
-            )
-            print(f"  [OK] Index FAISS cree et sauvegarde avec succes dans '{get_vector_store_dir(upload_folder, file_id)}'.")
-            success_count += 1
+            debut = time.time()
+            textes = rag.lignes_en_textes(charger_dataframe(chemin))
+            rag.charger_ou_construire_index(f["id_fichier"], textes, forcer=forcer)
+            print(f"  [OK] {etiquette} : {len(textes)} lignes indexées en {time.time() - debut:.0f} s")
+            ok += 1
         except Exception as e:
-            print(f"  [ERREUR] Erreur lors de l'indexation de {name} : {e}")
+            erreurs.append(etiquette)
+            print(f"  [ERREUR] {etiquette} : {e}")
 
-    print("\n" + "=" * 60)
-    print(f"REINDEXATION TERMINEE : {success_count}/{len(files)} fichier(s) reindexe(s) avec succes.")
-    print("=" * 60)
+    print("=" * 64)
+    print(f"  Résultat : {ok} réindexé(s), {len(absents)} absent(s) du disque, {len(erreurs)} erreur(s)")
+    if absents:
+        print("  Fichiers perdus (lignes conservées en base, à réimporter par l'utilisateur) :")
+        for a in absents:
+            print(f"    - {a}")
+    print("=" * 64)
+    return 0 if not erreurs else 2
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Réindexation des fichiers pour DataIA avec Ollama (nomic-embed-text)")
-    parser.add_argument("--folder", default="uploads", help="Dossier contenant les fichiers et index")
-    parser.add_argument("--no-force", action="store_true", help="Ne pas forcer la suppression des index déjà existants")
+    parser = argparse.ArgumentParser(description="Réindexation FAISS (nomic-embed-text, 768 dim.)")
+    parser.add_argument("--no-force", action="store_true",
+                        help="ne reconstruit que les index absents ou de mauvaise dimension")
     args = parser.parse_args()
-
-    reindex_all(upload_folder=args.folder, force=not args.no_force)
+    sys.exit(reindexer_tout(forcer=not args.no_force))
