@@ -1,0 +1,102 @@
+[
+  {
+    "question": "Quel est le total des ventes ?",
+    "fichier": 35,
+    "duree_s": 11.3,
+    "appels_llm": [
+      {
+        "prompt_tokens": 547,
+        "sortie_tokens": 31,
+        "duree_s": 10.3
+      }
+    ],
+    "intent": "stat",
+    "reponse": "Ce fichier ne contient pas de colonne correspondant à « ventes ». Sur quelle colonne voulez-vous calculer ce total ? Voici les options possibles, calculées par pandas :\n\n| Option | Résultat (Total) |\n|---|---|\n| `price` | 10,7 |\n| `stock_quantity` | 275 |\n| `price × stock_quantity` | 424 |\n\nCliquez sur une suggestion ou reformulez votre question.",
+    "attendu": "pas de colonne ventes : price=10,7 / stock=275 / price×stock=424"
+  },
+  {
+    "question": "ما هو مجموع المبيعات؟",
+    "fichier": 35,
+    "duree_s": 5.4,
+    "appels_llm": [
+      {
+        "prompt_tokens": 546,
+        "sortie_tokens": 31,
+        "duree_s": 4.7
+      }
+    ],
+    "intent": "stat",
+    "reponse": "هذا الملف لا يحتوي على عمود يطابق «المبيعات». على أي عمود تريد حساب مجموع؟ إليك الخيارات الممكنة، محسوبة بواسطة pandas:\n\n| الخيار | النتيجة (مجموع) |\n|---|---|\n| `price` | 10.7 |\n| `stock_quantity` | 275 |\n| `price × stock_quantity` | 424 |\n\nانقر على أحد الاقتراحات أو أعد صياغة سؤالك.",
+    "attendu": "idem"
+  },
+  {
+    "question": "Quel est le total des ventes ?",
+    "fichier": 31,
+    "duree_s": 24.8,
+    "appels_llm": [
+      {
+        "prompt_tokens": 746,
+        "sortie_tokens": 32,
+        "duree_s": 18.5
+      },
+      {
+        "prompt_tokens": 168,
+        "sortie_tokens": 20,
+        "duree_s": 4.2
+      }
+    ],
+    "intent": "stat",
+    "reponse": "Le total des ventes est de 16 037 348.\n\n**Total de `Total_Price`** : **16 037 348**\n\n> 🔢 *Calculé par pandas — opération : `sum` · colonne : `Total_Price` · 1 000 lignes utilisées sur 1 000*\n>\n> ℹ️ « ventes » a été interprété comme la colonne `Total_Price`.",
+    "attendu": "somme Total_Price"
+  },
+  {
+    "question": "Quel est le chiffre d'affaires par région ?",
+    "fichier": 31,
+    "duree_s": 5.9,
+    "appels_llm": [
+      {
+        "prompt_tokens": 749,
+        "sortie_tokens": 31,
+        "duree_s": 4.7
+      }
+    ],
+    "intent": "stat",
+    "reponse": "**Total de `Total_Price` par `Region`** (5 groupes) :\n\n| Region | sum(Total_Price) |\n|---|---|\n| Sousse | 3 607 262 |\n| Nabeul | 3 388 451 |\n| Bizerte | 3 193 838 |\n| Sfax | 2 934 508 |\n| Tunis | 2 913 289 |\n\n> 🔢 *Calculé par pandas — opération : `groupby` · colonne : `Total_Price` · 1 000 lignes utilisées sur 1 000*\n>\n> ℹ️ « ventes » a été interprété comme la colonne `Total_Price`.",
+    "attendu": "groupby Region sum Total_Price"
+  },
+  {
+    "question": "Combien de factures ont le statut Pending ?",
+    "fichier": 31,
+    "duree_s": 12.7,
+    "appels_llm": [
+      {
+        "prompt_tokens": 748,
+        "sortie_tokens": 54,
+        "duree_s": 7.9
+      },
+      {
+        "prompt_tokens": 161,
+        "sortie_tokens": 12,
+        "duree_s": 3.0
+      }
+    ],
+    "intent": "stat",
+    "reponse": "305 factures ont le statut Pending.\n\n**Nombre de lignes** : **305**\n\n> 🔢 *Calculé par pandas — opération : `count` · 305 lignes utilisées sur 1 000 · filtres : `Status == Pending`*",
+    "attendu": "count Status == Pending"
+  },
+  {
+    "question": "What are the top 3 products by total sales?",
+    "fichier": 31,
+    "duree_s": 6.9,
+    "appels_llm": [
+      {
+        "prompt_tokens": 748,
+        "sortie_tokens": 38,
+        "duree_s": 5.7
+      }
+    ],
+    "intent": "stat",
+    "reponse": "**Top 3 `Product` by total of `Total_Price`** :\n\n| Product | sum(Total_Price) |\n|---|---|\n| Mouse | 2,205,293 |\n| Laptop | 2,133,585 |\n| Keyboard | 2,078,756 |\n\n> 🔢 *Computed by pandas — operation : `top` · column : `Total_Price` · 1,000 rows used out of 1,000*\n>\n> ℹ️ “sales” was interpreted as the column `Total_Price`.",
+    "attendu": "top 3 Product sum Total_Price"
+  }
+]

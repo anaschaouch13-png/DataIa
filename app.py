@@ -19,10 +19,9 @@ from services import rag
 from services.db import get_db_connection
 from services.domaines import DOMAINE_PAR_DEFAUT, DOMAINES, domaine_valide
 from services.langue import analyser_question, message
-from services.llm import (OllamaIndisponibleError, generer_reponse,
-                          verifier_ollama)
+from services.assistant import repondre
+from services.llm import OllamaIndisponibleError, prechauffer, verifier_ollama
 from services.parsers import charger_dataframe
-from services.prompts import prompt_systeme_rag, prompt_utilisateur_rag
 
 # ================== 2. Config ==================
 # Console Windows en cp1252 : sans cela, un print/log contenant de l'arabe
@@ -270,15 +269,6 @@ def chat(file_id):
 # ================== Route ask_ia (Version Finale Complète) ==================
 
 
-def resume_categories(df: pd.DataFrame, max_valeurs: int = 35) -> str:
-    """Valeurs distinctes des colonnes texte (aide le LLM sur les catégories / villes)."""
-    lignes = []
-    for c in df.select_dtypes(include=['object', 'string', 'category']).columns:
-        uniques = [str(v) for v in df[c].dropna().unique()[:max_valeurs]]
-        lignes.append(f"- {c} : {', '.join(uniques)}")
-    return "\n".join(lignes) if lignes else "Aucune colonne catégorielle"
-
-
 @app.route('/ask_ia', methods=['POST'])
 @login_required
 def ask_ia():
@@ -311,31 +301,20 @@ def ask_ia():
 
         df = load_dataset(chemin)
 
-        # 3. RAG : recherche des lignes les plus proches de la question
-        textes = rag.lignes_en_textes(df)
-        index = rag.charger_ou_construire_index(int(file_id), textes)
-        extraits = rag.rechercher(index, analyse.question_pour_llm, nb_lignes=len(textes))
+        # 3. Routeur hybride : pandas (calculs) | RAG (texte) | graphique | ML selon le domaine
+        #    (services/assistant.py)
+        reponse = repondre(df, int(file_id), question, analyse, current_user.domaine)
 
-        # 4. Génération de la réponse par le LLM local, dans la langue de l'utilisateur
-        prompt_user = prompt_utilisateur_rag(
-            colonnes=df.columns.tolist(),
-            valeurs_categories=resume_categories(df),
-            stats=df.describe(include='all').to_string(),
-            extraits="\n".join(f"- {e}" for e in extraits),
-            question=analyse.question_pour_llm,
-            langue_reponse=langue,
-        )
-        reponse = generer_reponse(prompt_systeme_rag(langue), prompt_user)
-        if analyse.avertissement:
-            reponse = f"{analyse.avertissement}\n\n{reponse}"
-
-        # 5. Historique : on enregistre la question telle que l'utilisateur l'a écrite
+        # 4. Historique : on enregistre la question telle que l'utilisateur l'a écrite
         cursor.execute("INSERT INTO questions (id_utilisateur, id_fichier, question_texte, reponse_texte, date_question) "
                        "VALUES (%s, %s, %s, %s, NOW())",
-                       (current_user.id, file_id, question, reponse))
+                       (current_user.id, file_id, question, reponse.texte))
         conn.commit()
-        return jsonify({"status": "success", "answer": reponse,
-                        "langue": analyse.langue, "langue_reponse": langue})
+        return jsonify({"status": "success", "answer": reponse.texte,
+                        "langue": analyse.langue, "langue_reponse": langue,
+                        "intent": reponse.intent, "routage": reponse.source_routage,
+                        "resultat": reponse.resultat, "suggestions": reponse.suggestions,
+                        "demande_precision": reponse.demande_precision, "temps": reponse.temps})
 
     except OllamaIndisponibleError as e:
         # Ollama arrêté ou modèle absent : message clair, code 503, pas de crash
@@ -687,4 +666,6 @@ if __name__ == '__main__':
     if not etat["ok"]:
         log.warning("Ollama indisponible ou modèles manquants %s : le chat affichera un message d'erreur.",
                     etat["manquants"])
+    else:
+        prechauffer()   # charge les modèles en RAM en arrière-plan (1re question plus rapide)
     app.run(debug=config.FLASK_DEBUG)

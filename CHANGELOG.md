@@ -4,6 +4,96 @@ Branche Git : `dataia-v2` (un commit par phase).
 
 ---
 
+## Phase 3 — Routeur hybride (le LLM comprend, pandas calcule)
+
+### Corrections préalables demandées
+- **venv** :
+  - `Scripts/activate` pointait encore vers `C:\stage-perfectionnemnt\DataIA\venv`. Il utilise maintenant `/e/stage-perfectionnemnt/DataIA_Loal/venv` (la forme `E:\…` cassait le PATH sous Git Bash).
+  - `activate.bat` (corrigé par l'utilisatrice) et `Activate.ps1` (chemin calculé automatiquement) ont été vérifiés.
+  - **Les 24 lanceurs `.exe`** (`pip.exe`, `flask.exe`…) lançaient le Python de **l'ancien venv**, qui existe encore sur `C:` : un `pip install` aurait installé dans le mauvais environnement. Leur ligne `#!` a été réécrite (sauvegarde faite avant) et vérifiée : `pip --version` affiche `E:\…\DataIA_Loal\venv`.
+  - `pyvenv.cfg` : ligne `command` mise à jour.
+  - Vérifié dans cmd, PowerShell et Git Bash.
+- **`demarrer.bat`** (double-clic), qui exécute dans l'ordre :
+  1. vérification du venv et du `.env` ;
+  2. MySQL (attend que WampServer soit lancé) ;
+  3. Ollama (lance `ollama serve` s'il est arrêté) ;
+  4. alerte si des migrations sont en attente ;
+  5. ouverture du navigateur dès que Flask répond ;
+  6. fins de ligne CRLF.
+
+  Testé : toutes les vérifications passent et Flask répond 200.
+
+### Fichiers ajoutés
+| Fichier | Rôle |
+|---|---|
+| `services/router.py` | Routeur : règles par mots-clés (intents évidents, liste des valeurs d'une colonne), puis LLM avec **JSON contraint**, puis **validation** (opération autorisée, colonnes, filtres **ancrés dans la question**, regroupement et période détectés par règles). |
+| `services/stats.py` | Moteur pandas : 10 opérations en liste fermée, filtres, produit de deux colonnes, conversion robuste des nombres et des dates. Aucun `eval`/`exec`. |
+| `services/semantique.py` | Résolution **déterministe** de la colonne mesurée (colonne citée, concept « ventes / quantité / prix » en fr / en / ar) et du regroupement (« par X », « top N X », « حسب X »), avec synonymes fr / en / ar. |
+| `services/redaction.py` | Phrases modèles en 3 langues, tableaux Markdown, ligne de provenance « Calculé par pandas », demande de précision avec options calculées, **garde-fou** sur les nombres écrits par le LLM. |
+| `services/assistant.py` | Orchestration d'une question (langue → routeur → pandas / RAG / registre ML → réponse) et mesure des temps par étape. |
+| `services/ml/__init__.py`, `services/ml/registry.py` | Registre des modèles par domaine (métadonnées ; l'exécution arrive en Phase 5). |
+| `tests/test_routeur_hybride.py` | **15 tests** `unittest`, dont le cas réel `produits_magasin.csv` dans 4 langues. |
+| `tests/benchmark_routeur.py` | Banc de mesure avant / après (temps, tokens, réponses). |
+| `tests/donnees/produits_magasin.csv`, `tests/donnees/sales_data_1000_rows.xlsx` | Données de test. |
+| `mesures/phase3_avant.json`, `mesures/phase3_apres.json` | Résultats bruts du banc de mesure. |
+
+### Fichiers modifiés
+- **`app.py`** :
+  - `/ask_ia` délègue à `services.assistant.repondre`. La réponse JSON contient en plus `intent`, `routage`, `resultat` (structuré), `suggestions`, `demande_precision` et `temps`.
+  - `resume_categories` est déplacé dans `assistant.py`.
+  - Préchauffage d'Ollama au démarrage.
+- **`services/llm.py`** :
+  - options communes à tous les appels (`num_gpu`, `keep_alive`, `num_ctx`), sans quoi Ollama recharge le modèle ;
+  - `generer_json()` (paramètre `format`) ;
+  - trace des tokens et durées par requête ;
+  - `prechauffer()` ;
+  - vérification d'Ollama gardée 30 s ;
+  - correction : `keep_alive` en secondes pour les embeddings.
+- **`services/prompts.py`** : prompt du routeur et son schéma JSON (colonnes en `enum`), contexte réduit (**colonnes + types + 3 lignes**, plus de `describe()`), RAG allégé, prompt de reformulation.
+- **`services/rag.py`** : `lignes_exactes()` et `recherche_hybride()`.
+- **`templates/chat.html`** : suggestions affichées en boutons cliquables.
+- **`config.py`, `.env`, `.env.example`** : `OLLAMA_NUM_GPU=0`, `OLLAMA_KEEP_ALIVE=30m`, `REFORMULATION_LLM=1`, `OLLAMA_BASE_URL=http://127.0.0.1:11434`.
+- **venv** (hors dépôt) : `Scripts/activate`, 24 `Scripts/*.exe`, `pyvenv.cfg`.
+- **`demarrer.bat`**.
+
+### Problèmes trouvés et corrigés pendant la phase (tous couverts par un test)
+| Problème | Correction |
+|---|---|
+| « ventes » sans colonne de ventes → chiffres inventés (105 / 106,20) | Demande de précision avec les options calculées |
+| Le LLM ignorait « par région » | Détection du regroupement par règles |
+| « top 3 products » regroupé par `Total_Price` | Regroupement par une colonne catégorielle uniquement |
+| Filtre `Status == Pending` inventé (recopié du prompt) | Filtres ancrés dans la question, filtres rejetés signalés |
+| « Quelles régions ? » : 4 sur 5 via le RAG | Liste exacte par pandas (sans LLM) |
+| `INV-10001` pris pour un nombre ; « 1,200.50 » illisible | Conversion selon la forme du nombre et le dernier séparateur décimal |
+| Hamzas retirés par la normalisation (« الإيرادات » non reconnu) | Motifs arabes normalisés |
+| `localhost` = 2,3 s par connexion sous Windows | `127.0.0.1` |
+| GPU MX130 plus lent que le CPU | `OLLAMA_NUM_GPU=0` |
+| Avertissements pandas à chaque question | Pré-filtre des dates par expression régulière |
+| RAG : la ligne « INV-10002 » absente des extraits vectoriels | **Recherche hybride** (`rag.recherche_hybride`) : mot-clé exact puis vecteurs ; `RAG_TOP_K` passe de 8 à 5 |
+
+### Mesures (6 questions identiques, avant → après)
+- Temps moyen : **61,3 s → 11,2 s** (÷ 5,5).
+- Réponses exactes : **0 / 6 → 6 / 6**.
+- Tokens du prompt : **~2 080 → ~680**.
+- Détail : `JUSTIFICATIONS.md` §28.
+
+### Tests Phase 3
+| Suite | Résultat |
+|---|---|
+| `tests/test_routeur_hybride.py` (16 tests, dont le cas réel en 4 langues) | ✅ |
+| Non-régression Phase 1 (script de test, chat 4 langues + derja, sécurité, Ollama arrêté) | ✅ 21/21 |
+| Non-régression Phase 2 (inscription, profil, admin, déconnexion, clés étrangères) | ✅ 33/33 |
+| `demarrer.bat` en double-clic | ✅ |
+
+### Limites connues
+- **Questions texte (RAG)** : ~20 s avec le cache chaud, 50 à 80 s à froid.
+- **Graphiques** : encore l'ancien format, avec des données parfois fausses. Ils sont remplacés en Phase 4 par des graphiques calculés par pandas.
+
+### Packages
+Aucun package installé.
+
+---
+
 ## Phase 2 — Domaine d'activité, déconnexion et base de données
 
 ### Base de données (migration `001`)

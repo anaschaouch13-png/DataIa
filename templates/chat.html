@@ -161,6 +161,8 @@
                   // لو الإجابة نص عادي مفيهاش غرافيك
                   loadingMsg.innerHTML = marked.parse(answer);
               }
+              // Phase 3 : suggestions cliquables (ex. choix de la colonne quand « ventes » est ambigu)
+              afficherSuggestions(loadingMsg, data.suggestions);
           } else {
               loadingMsg.innerHTML = "Erreur: " + data.message;
           }
@@ -169,6 +171,24 @@
           loadingMsg.innerHTML = "Erreur de connexion au serveur.";
       });
   }
+
+      function afficherSuggestions(conteneur, suggestions) {
+          if (!conteneur || !suggestions || !suggestions.length) return;
+          const zone = document.createElement('div');
+          zone.className = 'mt-2 d-flex flex-wrap gap-2';
+          suggestions.forEach(texte => {
+              const bouton = document.createElement('button');
+              bouton.type = 'button';
+              bouton.className = 'btn btn-sm btn-outline-info';
+              bouton.textContent = texte;          // textContent : pas d'injection HTML
+              bouton.addEventListener('click', () => {
+                  document.getElementById('user-input').value = texte;
+                  sendMessage();
+              });
+              zone.appendChild(bouton);
+          });
+          conteneur.appendChild(zone);
+      }
 
       function renderPlotlyGraph(graphData) {
           let graphId = 'graph-' + Date.now();
