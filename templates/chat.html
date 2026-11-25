@@ -1,0 +1,265 @@
+{% extends "base.html" %} {% block content %}
+<head>
+  <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
+</head>
+
+<div class="container py-4">
+  <div class="card shadow-sm border-0" style="border-radius: 15px">
+    <div
+      class="card-header bg-white border-bottom-0 py-3 d-flex justify-content-between align-items-center"
+    >
+      <h5 class="mb-0">
+        <i class="fas fa-robot text-info me-2"></i> Analyse de :
+        <strong>{{ fichier.nom_fichier }}</strong>
+      </h5>
+      <button onclick="exportLastFive()" class="btn btn-sm btn-danger">
+        <i class="fas fa-file-pdf me-2"></i> Export PDF
+      </button>
+    </div>
+
+    <div
+      id="chat-box"
+      class="card-body overflow-auto"
+      style="
+        height: 500px;
+        background-color: #fcfcfc;
+        display: flex;
+        flex-direction: column;
+      "
+    >
+      {% if historique %} {% for chat in historique %}
+      <div
+        class="message user-message mb-3 p-3 rounded bg-primary text-white ms-auto"
+        style="max-width: 75%; border-radius: 15px 15px 0 15px !important"
+      >
+        {{ chat.question_texte }}
+      </div>
+      <div
+        class="message bot-message mb-3 p-3 rounded bg-light text-dark shadow-sm"
+        style="
+          max-width: 75%;
+          border-radius: 15px 15px 15px 0 !important;
+          border-left: 4px solid #00d2d3;
+        "
+      >
+        {{ chat.reponse_texte }}
+      </div>
+      {% endfor %} {% else %}
+      <div id="empty-chat" class="text-center text-muted my-5">
+        <i class="fas fa-magic fa-2x mb-3 text-info"></i>
+        <p>
+          Posez n'importe quelle question sur vos données (Finance, Stats...)
+        </p>
+      </div>
+      {% endif %}
+    </div>
+
+    <div class="card-footer bg-white border-top-0 p-3">
+      <div class="input-group">
+        <input
+          type="text"
+          id="user-input"
+          class="form-control border-0 bg-light"
+          placeholder="Ex: Quel est le total des ventes ?"
+          style="border-radius: 10px 0 0 10px shadow: none;"
+          onkeypress="if(event.key === 'Enter') sendMessage()"
+        />
+        <button
+          onclick="sendMessage()"
+          class="btn btn-primary px-4"
+          style="
+            border-radius: 0 10px 10px 0;
+            background-color: #00d2d3;
+            border: none;
+          "
+        >
+          <i class="fas fa-paper-plane"></i>
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+      const chatBox = document.getElementById('chat-box');
+
+      // 1. التمرير التلقائي عند فتح الصفحة
+      window.onload = function() {
+          chatBox.scrollTop = chatBox.scrollHeight;
+      };
+
+      function appendMessage(sender, text) {
+          const msgDiv = document.createElement('div');
+          const isUser = sender === 'user';
+
+          msgDiv.className = `message ${sender}-message mb-3 p-3 rounded ${isUser ? 'bg-primary text-white ms-auto' : 'bg-light text-dark shadow-sm bot-message'}`;
+          msgDiv.style.maxWidth = '75%';
+          msgDiv.style.borderRadius = isUser ? '15px 15px 0 15px' : '15px 15px 15px 0';
+
+          if(!isUser) {
+              msgDiv.style.borderLeft = '4px solid #00d2d3';
+              msgDiv.innerHTML = marked.parse(text);
+          } else {
+              msgDiv.textContent = text;
+          }
+
+          chatBox.appendChild(msgDiv);
+          chatBox.scrollTo({ top: chatBox.scrollHeight, behavior: 'smooth' });
+
+          const emptyHint = document.getElementById('empty-chat');
+          if(emptyHint) emptyHint.remove();
+
+          return msgDiv;
+      }
+
+      function sendMessage() {
+      let input = document.getElementById('user-input');
+      let question = input.value;
+      if (!question.trim()) return;
+
+      appendMessage('user', question);
+      input.value = '';
+
+      let loadingMsg = appendMessage('bot', '<i class="fas fa-spinner fa-spin"></i> L’IA analyse vos données...');
+
+      fetch('/ask_ia', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+              file_id: {{ fichier.id_fichier }},
+              question: question
+          })
+      })
+      .then(response => response.json())
+      .then(data => {
+          if (data.status === "success") {
+              let answer = data.answer.trim();
+
+              // 1. الرادار اللي يلوج على الـ JSON وسط النص
+              const jsonMatch = answer.match(/\{[\s\S]*"type_graph"[\s\S]*\}/);
+
+              if (jsonMatch) {
+                  try {
+                      // استخراج الـ JSON ورسم الغرافيك
+                      let graphConfig = JSON.parse(jsonMatch[0]);
+
+                      // مسح الـ JSON من النص باش ما يظهرش كتيبة خايبة للمستخدم
+                      let textPart = answer.replace(jsonMatch[0], "").trim();
+
+                      if (textPart) {
+                          loadingMsg.innerHTML = marked.parse(textPart);
+                      } else {
+                          loadingMsg.remove(); // لو مفيش نص، نحي الـ loading ونخلي الغرافيك بركة
+                      }
+
+                      renderPlotlyGraph(graphConfig);
+                  } catch (e) {
+                      console.error("Erreur JSON:", e);
+                      loadingMsg.innerHTML = marked.parse(answer);
+                  }
+              } else {
+                  // لو الإجابة نص عادي مفيهاش غرافيك
+                  loadingMsg.innerHTML = marked.parse(answer);
+              }
+          } else {
+              loadingMsg.innerHTML = "Erreur: " + data.message;
+          }
+      })
+      .catch(err => {
+          loadingMsg.innerHTML = "Erreur de connexion au serveur.";
+      });
+  }
+
+      function renderPlotlyGraph(graphData) {
+          let graphId = 'graph-' + Date.now();
+          const graphDiv = document.createElement('div');
+          graphDiv.id = graphId;
+          graphDiv.style.width = '100%';
+          graphDiv.style.height = '350px';
+          graphDiv.className = 'mt-3 mb-3';
+
+          let botMsg = appendMessage('bot', "");
+          botMsg.innerHTML = "";
+          botMsg.appendChild(graphDiv);
+
+          let trace = {
+              x: graphData.data.x || graphData.data.labels,
+              y: graphData.data.y || graphData.data.values,
+              type: graphData.type_graph === 'pie' ? 'pie' : (graphData.type_graph === 'line' ? 'scatter' : 'bar'),
+              marker: { color: '#00d2d3' }
+          };
+
+          if(graphData.type_graph === 'pie') {
+              trace = {
+                  labels: graphData.data.x || graphData.data.labels,
+                  values: graphData.data.y || graphData.data.values,
+                  type: 'pie',
+                  hole: 0.4
+              };
+          }
+
+          const layout = {
+              title: { text: graphData.title },
+              margin: { t: 50, b: 50, l: 50, r: 50 },
+              paper_bgcolor: 'rgba(0,0,0,0)',
+              plot_bgcolor: 'rgba(0,0,0,0)',
+              autosize: true
+          };
+
+          Plotly.newPlot(graphId, [trace], layout, { responsive: true, displayModeBar: false });
+      }
+
+      // تصليح الـ PDF: أضفنا async وغيرنا الـ ID لـ chat-box
+      async function exportLastFive() {
+        // 1. تحديد مكان الرسائل (تأكدي من الـ ID)
+        const chatBox = document.getElementById('chat-box');
+        const messages = Array.from(chatBox.querySelectorAll('.message'));
+
+        // 2. تقسيم الرسائل: الكل للـ History وآخر إجابة للـ Conseil
+        const lastTen = messages.slice(-10);
+
+        // استخراج النص من آخر إجابة للـ Bot فقط
+        const allBotMessages = Array.from(chatBox.querySelectorAll('.bot-message'));
+        const lastBotAnswer = allBotMessages.length > 0 ? allBotMessages[allBotMessages.length - 1].innerText : "Pas de conseil disponible.";
+
+        let historyText = "";
+        lastTen.forEach(msg => {
+            const sender = msg.classList.contains('user-message') ? "Utilisateur" : "Assistant IA";
+            historyText += `${sender} : ${msg.innerText}\n\n`;
+        });
+
+        try {
+            // الـ Fetch الصحيح اللي يبعث الـ Keys المطلوبة في الـ Python
+            const response = await fetch('/export_pdf', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    history: historyText,   // بعثنا history عوضاً عن content
+                    conseil: lastBotAnswer  // بعثنا الـ conseil باش يظهر في المربع الأزرق
+                })
+            });
+
+            if (response.ok) {
+                const blob = await response.blob();
+                const url = window.URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = "Rapport_d'analyse(DataIA).pdf";
+                document.body.appendChild(a);
+                a.click();
+                a.remove();
+                window.URL.revokeObjectURL(url);
+            } else {
+                alert("Erreur lors de la génération du PDF.");
+            }
+        } catch (error) {
+            console.error("Erreur PDF:", error);
+        }
+
+        chatBox.scrollTo({
+      top: chatBox.scrollHeight,
+      behavior: 'smooth'
+    });
+    }
+</script>
+{% endblock %}

@@ -1,0 +1,184 @@
+{% extends "base.html" %} {% block content %}
+<style>
+  /* تنسيق الرسالة اللي تخرج من الـ Bot */
+  .bot-message {
+    line-height: 1.6; /* باش الكلام ما يبداش لاصق في بعضو */
+    font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+  }
+
+  /* تخلي العنوان يجي في سطر وحدو ويكون واضح */
+  .bot-message strong {
+    display: block; /* يفرض سطر جديد */
+    margin-top: 18px; /* مسافة من فوق */
+    margin-bottom: 8px; /* مسافة من لوطا قبل النص */
+    color: #00b894; /* لون مزيان للعناوين (اختياري) */
+    font-weight: 700; /* تغليظ الخط */
+    font-size: 1.1rem;
+  }
+
+  /* تنسيق الجداول باش تظهر BI برسمي */
+  .bot-message table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 15px 0;
+    background-color: #ffffff;
+    border-radius: 8px;
+    overflow: hidden;
+    box-shadow: 0 0 10px rgba(0, 0, 0, 0.05);
+  }
+
+  .bot-message th {
+    background-color: #00d2d3;
+    color: white;
+    padding: 12px;
+    text-align: left;
+  }
+
+  .bot-message td {
+    border-bottom: 1px solid #eee;
+    padding: 10px;
+    color: #333;
+  }
+
+  /* تنسيق النقاط (Bullet points) */
+  .bot-message ul {
+    margin-bottom: 15px;
+    padding-left: 25px;
+  }
+
+  .bot-message li {
+    margin-bottom: 5px;
+  }
+</style>
+<div class="container-fluid">
+  <div class="d-flex justify-content-between align-items-center mb-4">
+    <h2 style="font-weight: 600; color: #1e272e">Dashboard</h2>
+    <span class="badge bg-info text-dark"
+      >Bienvenue, {{ current_user.nom_utilisateur }}</span
+    >
+  </div>
+
+  <div class="row mb-4">
+    <div class="col-md-4">
+      <div class="card border-0 shadow-sm p-3" style="border-radius: 12px">
+        <div class="d-flex align-items-center">
+          <div
+            class="icon-box bg-light-blue p-3 me-3"
+            style="border-radius: 10px; background-color: #e3f2fd"
+          >
+            <i class="fas fa-file-csv fa-2x" style="color: #0984e3"></i>
+          </div>
+          <div>
+            <h6 class="text-muted mb-0">Mes Fichiers</h6>
+            <h4 class="mb-0" style="font-weight: 700">{{ fichiers|length }}</h4>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="col-md-4">
+      <div class="card border-0 shadow-sm p-3" style="border-radius: 12px">
+        <div class="d-flex align-items-center">
+          <div
+            class="icon-box p-3 me-3"
+            style="border-radius: 10px; background-color: #f3e5f5"
+          >
+            <i class="fas fa-question-circle fa-2x" style="color: #6c5ce7"></i>
+          </div>
+          <div>
+            <h6 class="text-muted mb-0">Questions Posées</h6>
+            <h4 class="mb-0" style="font-weight: 700">{{ questions_count }}</h4>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card border-0 shadow-sm mb-4" style="border-radius: 15px">
+    <div class="card-body p-4">
+      <h5 class="mb-3" style="font-weight: 600">Analyser un nouveau fichier</h5>
+      <form
+        action="{{ url_for('upload_file') }}"
+        method="POST"
+        enctype="multipart/form-data"
+      >
+        <div class="row align-items-center">
+          <div class="col-md-9">
+            <input
+              type="file"
+              name="file"
+              class="form-control border-0 bg-light"
+              accept=".csv, .xlsx, .xls"
+              required
+            />
+            <small class="text-muted"
+              >Formats acceptés: CSV, Excel (Max 10MB)</small
+            >
+          </div>
+          <div class="col-md-3">
+            <button
+              type="submit"
+              class="btn btn-primary w-100 py-2"
+              style="background-color: #00d2d3; border: none; font-weight: 600"
+            >
+              <i class="fas fa-upload me-2"></i> Upload & Parser
+            </button>
+          </div>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div class="card border-0 shadow-sm" style="border-radius: 15px">
+    <div class="card-body p-4">
+      <h5 class="mb-3" style="font-weight: 600">Fichiers Récents</h5>
+      <div class="table-responsive">
+        <table class="table table-hover">
+          <thead class="table-light">
+            <tr>
+              <th>Nom du fichier</th>
+              <th>Date d'Upload</th>
+              <th>Type</th>
+              <th>Action</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for f in fichiers %}
+            <tr>
+              <td>
+                <i class="fas fa-file-alt me-2 text-primary"></i> {{
+                f.nom_fichier }}
+              </td>
+              <td>{{ f.date_upload.strftime('%d/%m/%Y %H:%M') }}</td>
+              <td>
+                <span class="badge bg-secondary">{{ f.type_fichier }}</span>
+              </td>
+              <td>
+                <a
+                  href="{{ url_for('chat', file_id=f.id_fichier) }}"
+                  class="btn btn-primary custom-btn"
+                >
+                  <i class="fas fa-robot me-1"></i> Analyser
+                </a>
+                <a
+                  href="{{ url_for('delete_file', file_id=f.id_fichier) }}"
+                  class="btn btn-sm btn-outline-danger"
+                  onclick="return confirm('Etes-vous sûr de vouloir supprimer ce fichier ?')"
+                >
+                  <i class="fas fa-trash"></i>
+                </a>
+              </td>
+            </tr>
+            {% else %}
+            <tr>
+              <td colspan="4" class="text-center text-muted py-4">
+                Aucun fichier trouvé. Commencez par uploader un document !
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
