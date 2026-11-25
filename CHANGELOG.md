@@ -4,6 +4,70 @@ Branche Git : `dataia-v2` (un commit par phase).
 
 ---
 
+## Phase 2 — Domaine d'activité, déconnexion et base de données
+
+### Base de données (migration `001`)
+- **Sauvegardes** (dossier `backups/`, non versionné) :
+  - `dataia_20261125_225632_manuel.sql` : état d'origine, **restauration testée** dans une base temporaire.
+  - `dataia_20261125_225728_avant_migration_001.sql` : sauvegarde automatique juste avant la migration.
+- **Répétée sur une copie** (`dataia_test`) avant l'application réelle.
+- Modifications :
+  - 4 tables MyISAM → **InnoDB**.
+  - `utilisateurs.domaine` : ENUM des 8 domaines, `NOT NULL DEFAULT 'Autre'` (les 7 comptes existants sont en `Autre`).
+  - `questions.id_fichier` et `rapports.id_question` deviennent **NULL autorisé**.
+  - **39 questions orphelines** : `id_fichier` passe à NULL, l'ancienne valeur est conservée dans la nouvelle table `migration_orphelins`.
+  - **7 clés étrangères** (CASCADE pour le propriétaire, SET NULL pour conserver l'historique).
+  - `rapports.type_graphique` (`chemin_graphique` existait déjà).
+  - Nouvelles tables **`modeles_ml`**, **`simulations`**, **`migration_orphelins`**, **`schema_migrations`**.
+- **Vérification après migration** :
+  - nombre de lignes identique (utilisateurs 7, fichiers 6, questions 64, rapports 8) ;
+  - **comparaison ligne par ligne et colonne par colonne** avec la sauvegarde : 0 différence inattendue ;
+  - 39/39 orphelins tracés avec leur valeur exacte.
+
+### Fichiers ajoutés
+| Fichier | Rôle |
+|---|---|
+| `migrate.py` | Applique `migrations/*.sql` dans l'ordre : sauvegarde `mysqldump` vérifiée, puis migration, puis contrôle du nombre de lignes. Options `--statut` et `--sauvegarde-seule`. |
+| `migrations/001_phase2_innodb_domaine_ml.sql` | Migration de la Phase 2 (commentée). |
+| `services/domaines.py` | Liste des 8 domaines + validation. |
+| `templates/profil.html` | Page profil (nom et domaine). |
+
+### Fichiers modifiés
+- **`app.py`**
+  - `User` : attribut `domaine` et constructeur `User.depuis_ligne()`.
+  - `after_request` : `Cache-Control: no-store` pour les pages connectées.
+  - `context_processor` : `DOMAINES` disponible dans les templates.
+  - **`/signup`** : domaine obligatoire validé côté serveur, champs conservés en cas d'erreur, message clair pour un email en double (au lieu de l'erreur SQL), email en minuscules.
+  - `/login` : `session.clear()` avant `login_user`.
+  - **`/profil`** (nouvelle) : GET et POST.
+  - **`/admin/set_domaine/<id>`** (nouvelle, `@admin_required`).
+  - `/admin/dashboard` : `LEFT JOIN` pour que les rapports sans question restent visibles.
+  - **`/logout`** : `session.clear()`, message, accepte GET et POST, sans `@login_required`.
+- **`templates/signup.html`** : liste déroulante « Domaine d'activité ».
+- **`templates/base.html`** : lien « Mon profil », nom et badge du domaine, bouton déconnexion identifié.
+- **`templates/admin_dashboard.html`** : boutons **Profil** et **Déconnexion** (absents avant), colonne Domaine modifiable, email affiché, messages flash.
+- **`database.sql`** : réécrit pour correspondre au **schéma v1 réel**. Une installation neuve suit `database.sql` puis `migrate.py` (testé).
+- **`config.py`**, **`.env`**, **`.env.example`** : `BACKUP_FOLDER`, `MIGRATIONS_FOLDER`, `MYSQLDUMP_PATH`.
+
+### Tests Phase 2 : 33 / 33 OK
+| Domaine | Résultat |
+|---|---|
+| Inscription : domaine valide, hors liste, absent ; email en double | ✅ |
+| Connexion réelle par mot de passe ; domaine affiché | ✅ |
+| Profil : affichage, modification, valeur invalide refusée | ✅ |
+| Admin : voir et modifier le domaine (avec accent : Télécom) ; non-admin → 403 | ✅ |
+| Bouton déconnexion sur dashboard, mes_fichiers, profil, admin | ✅ |
+| Après déconnexion : session vide ; 5 pages protégées + `/ask_ia` refusées | ✅ |
+| `Cache-Control: no-store` | ✅ |
+| FK : suppression de fichier → question conservée (NULL) ; utilisateur inexistant → erreur 1452 | ✅ |
+| Compte bloqué pendant sa session → déconnecté ; connexion refusée | ✅ |
+| Non-régression : utilisateur existant (dashboard, chat, historique) | ✅ |
+| Données existantes identiques après les tests | ✅ |
+| Installation neuve (`database.sql` + `migrate.py`) | ✅ |
+| Non-régression : tests de la Phase 1 relancés (chat 4 langues + derja, sécurité, Ollama arrêté) | ✅ 20/20 |
+
+---
+
 ## Phase 1 — LLM local, multilingue, configuration et sécurité
 
 ### Fichiers ajoutés
