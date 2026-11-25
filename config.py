@@ -66,16 +66,27 @@ DB_CONFIG = {
 }
 
 # ================== Ollama (LLM local) ==================
-OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434").rstrip("/")
+# 127.0.0.1 plutôt que localhost : sous Windows, « localhost » tente d'abord IPv6 (::1),
+# or Ollama n'écoute qu'en IPv4 -> 2,3 s perdues à chaque connexion (mesuré en Phase 3).
+OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://127.0.0.1:11434").rstrip("/")
 OLLAMA_CHAT_MODEL = os.getenv("OLLAMA_CHAT_MODEL", "qwen2.5:3b")
 OLLAMA_EMBED_MODEL = os.getenv("OLLAMA_EMBED_MODEL", "nomic-embed-text")
 OLLAMA_TEMPERATURE = _env_float("OLLAMA_TEMPERATURE", 0.0)   # 0 = réponses déterministes
 OLLAMA_NUM_CTX = _env_int("OLLAMA_NUM_CTX", 4096)            # fenêtre de contexte (tokens)
 OLLAMA_NUM_PREDICT = _env_int("OLLAMA_NUM_PREDICT", 800)     # longueur max de la réponse
 OLLAMA_TIMEOUT = _env_int("OLLAMA_TIMEOUT", 180)             # secondes (CPU lent au 1er appel)
+# Nombre de couches envoyées au GPU. Mesuré sur la MX130 (2 Go) : le découpage
+# CPU/GPU automatique donne 3,2 tokens/s, le 100 % CPU (0) donne 8,7 tokens/s.
+# Chaîne vide = laisser Ollama décider.
+OLLAMA_NUM_GPU = os.getenv("OLLAMA_NUM_GPU", "0")
+# Durée pendant laquelle Ollama garde le modèle en RAM après un appel
+# (évite ~10 s de rechargement à chaque question).
+OLLAMA_KEEP_ALIVE = os.getenv("OLLAMA_KEEP_ALIVE", "30m")
+# Reformulation de la réponse chiffrée par le LLM (1) ou phrase modèle seule (0)
+REFORMULATION_LLM = os.getenv("REFORMULATION_LLM", "1") == "1"
 
 # ================== RAG / FAISS ==================
-RAG_TOP_K = _env_int("RAG_TOP_K", 8)
+RAG_TOP_K = _env_int("RAG_TOP_K", 5)
 EMBEDDING_DIM = _env_int("EMBEDDING_DIM", 768)  # dimension des vecteurs nomic-embed-text
 
 # ================== Chemins ==================

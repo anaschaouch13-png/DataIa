@@ -31,6 +31,16 @@
   18. [Tables `modeles_ml` et `simulations`](#18-tables-modeles_ml-et-simulations)
   19. [Déconnexion fiable](#19-déconnexion-fiable)
   20. [Profil et administration du domaine](#20-profil-et-administration-du-domaine)
+- **Phase 3 — Routeur hybride**
+  21. [Pourquoi le RAG seul ne suffit pas](#21-pourquoi-le-rag-seul-ne-suffit-pas-pour-les-données-tabulaires)
+  22. [Exemple réel avant / après](#22-exemple-réel-avant--après--produits_magasincsv)
+  23. [Routeur hybride : règles puis LLM](#23-routeur-hybride--règles-puis-llm)
+  24. [Sortie JSON contrainte plutôt que génération de code](#24-sortie-json-contrainte-plutôt-que-génération-de-code)
+  25. [Liste fermée d'opérations et validation](#25-liste-fermée-dopérations-et-validation)
+  26. [Résolution déterministe des colonnes et ambiguïté](#26-résolution-déterministe-des-colonnes-et-ambiguïté)
+  27. [Reformulation par le LLM sous contrôle](#27-reformulation-par-le-llm-sous-contrôle)
+  28. [Temps de réponse : mesures avant / après](#28-temps-de-réponse--mesures-avant--après)
+  29. [Modèle demandé hors domaine](#29-modèle-demandé-hors-domaine)
 
 ---
 
@@ -318,3 +328,175 @@ La table `migration_orphelins` garde pour chaque ligne : la table, l'id de la li
 - **Profil** (`/profil`) : l'utilisateur modifie son nom et son domaine. L'email n'est pas modifiable ici, car c'est l'identifiant de connexion.
 - **Admin** : une colonne « Domaine » avec une liste déroulante envoyée automatiquement au changement (`POST /admin/set_domaine/<id>`, protégée par `@admin_required` ; testé : 403 pour un non-admin).
 - **Inscription** : un email déjà utilisé affiche « Un compte existe déjà avec cet email ». Avant, l'**erreur SQL brute** était montrée, ce qui révélait la structure de la base. Les emails sont enregistrés en minuscules.
+
+---
+
+# Phase 3 — Routeur hybride : le LLM comprend, pandas calcule
+
+## 21. Pourquoi le RAG seul ne suffit pas pour les données tabulaires
+
+Le RAG (*Retrieval-Augmented Generation*) cherche les **quelques lignes** les plus proches de la question (8 sur 1000 dans DataIA), puis demande au LLM de répondre avec ces lignes.
+
+- Un **total**, une **moyenne** ou un **comptage** portent sur **toutes** les lignes. Avec 8 lignes sur 1000, le LLM ne peut pas les calculer : il **invente** un chiffre plausible.
+- Un LLM ne sait pas faire de calcul exact : il prédit des mots. Même avec toutes les lignes dans le prompt, additionner 1000 nombres « de tête » donne une valeur fausse. De toute façon, 1000 lignes ne tiennent pas dans 4096 tokens.
+- La recherche par similarité convient au **texte** (« quel client s'appelle Alpha ? »), pas à l'**agrégation** (« combien… au total ? »).
+
+Conclusion : il faut **séparer la compréhension** de la question (le LLM) et **le calcul** (pandas, exact et déterministe).
+
+## 22. Exemple réel avant / après : produits_magasin.csv
+
+**Le fichier** : 5 produits, colonnes `product_id, product_name, category, price, stock_quantity`. **Il n'y a aucune colonne de ventes.**
+
+| | « Quel est le total des ventes ? » | « ما هو مجموع المبيعات؟ » |
+|---|---|---|
+| **Avant** (observé par l'utilisatrice) | `105.00` | `106.20 دينار` |
+| **Avant** (relancé pour le banc de mesure) | `Le total des ventes est de 150.` | `مجموع المبيعات هو 100.30 دينار.` |
+| **Après (Phase 3)** | Demande de précision | **La même** demande de précision, en arabe |
+
+Aucune des valeurs « avant » ne correspond à un calcul possible : ce sont des chiffres **inventés**, et différents à chaque langue et à chaque exécution.
+
+**Réponse après la Phase 3** (identique en français, anglais, arabe et derja) :
+
+> Ce fichier ne contient pas de colonne correspondant à « ventes ». Sur quelle colonne voulez-vous calculer ce total ? Voici les options possibles, calculées par pandas :
+>
+> | Option | Résultat (Total) |
+> |---|---|
+> | `price` | 10,7 |
+> | `stock_quantity` | 275 |
+> | `price × stock_quantity` | 424 |
+>
+> *(3 boutons cliquables ; « Quel est le total de price × stock_quantity ? » donne **424**, la valeur du stock)*
+
+**Test automatique** : `tests/test_routeur_hybride.py` vérifie que, pour les 4 langues, les options et leurs valeurs (10,7 / 275 / 424) sont **exactement les mêmes**, qu'aucune valeur inventée (105, 106,2, 150, 100,3) n'apparaît, et que la suggestion cliquée donne 424.
+
+**Quand une colonne de ventes existe** (`sales_data_1000_rows.xlsx`) : « ventes » est résolu en `Total_Price`. La réponse vaut **16 037 348** dans toutes les langues et l'indique : « ℹ️ « ventes » a été interprété comme la colonne `Total_Price`. » L'ancien pipeline répondait `16037.35`.
+
+> **Jury :** *« Pourquoi ne pas choisir automatiquement price × quantité ? »*
+> **Réponse :** Parce que ce serait une supposition : « ventes » pourrait être le chiffre d'affaires, le nombre d'articles ou la valeur du stock. Quand le fichier contient une colonne de ventes, le système la choisit et le dit ; sinon il demande, en montrant le résultat exact de chaque option. Une question en plus vaut mieux qu'un chiffre faux présenté comme vrai.
+
+## 23. Routeur hybride : règles puis LLM
+
+**Choix.** Chaque question est classée dans un *intent* : `stat`, `text`, `graph`, `forecast`, `anomaly`, `churn` ou `export`.
+
+1. **Règles par mots-clés** (`services/router.py`), en français, anglais, arabe et derja traduite, pour les intents **sans ambiguïté** : « graphique / chart / رسم », « anomalie / fraude / شاذ », « prévision / forecast / توقع », « churn / quitter la banque / مغادرة », « PDF / exporter ». C'est instantané et ne demande aucun appel au LLM.
+2. Sinon, le **LLM classe la question** avec une sortie JSON contrainte (point 24) : `stat` ou `text`, et pour `stat`, l'opération, la colonne et les filtres.
+3. Selon l'intent :
+   - `stat` → **pandas** ;
+   - `text` → RAG ;
+   - `graph` → ancien format en attendant la Phase 4 ;
+   - `forecast`, `anomaly`, `churn` → registre des modèles selon le domaine ;
+   - `export` → bouton PDF.
+
+**Pourquoi des règles avant le LLM.** Un mot comme « graphique » ne laisse aucun doute. Payer 5 s de LLM pour le reconnaître serait du gaspillage, et les règles ne se trompent pas de langue.
+
+**Pièges évités dans les règles.** « rapport » seul n'est pas un mot-clé d'export (« par rapport au mois dernier ») ; testé.
+
+**« Quelles sont les valeurs de X ? » aussi par pandas.** Mesuré pendant les tests de non-régression : via le RAG, le modèle 3B ne citait que les valeurs présentes dans les 8 lignes extraites (« Quelles régions ? » → 4 régions sur 5 ; en arabe → 2 sur 5), alors que la liste complète figurait dans le prompt. Lister les valeurs d'une colonne est une question **exacte** : une règle (« quels sont les X », « which X », « ما هي X », derja « chnowa el X ») la transforme en `count` regroupé par X. Le résultat est la liste complète avec le nombre de lignes de chaque valeur, **sans appel au LLM** (0,04 s). Deux garde-fous :
+- pas de règle s'il y a un mot de calcul (« Quel produit a le **plus** de ventes ? ») ;
+- pas de règle si une valeur du fichier est citée (« Quels clients ont le statut **Pending** ? » est un filtre, laissé au LLM).
+
+## 24. Sortie JSON contrainte plutôt que génération de code
+
+**Choix.** Le paramètre `format` d'Ollama reçoit un **JSON schema** (`services/prompts.py`, `schema_routeur`). Ollama le transforme en **grammaire** et, à chaque token, n'autorise que les tokens qui gardent le JSON valide. En particulier, les noms de colonnes sont des `enum` construits à partir du fichier : le modèle **ne peut physiquement pas** écrire une colonne qui n'existe pas.
+
+Exemple de sortie réelle : `{"intent": "stat", "operation": "count", "colonne": null, "filtres": [{"colonne": "Status", "operateur": "==", "valeur": "Pending"}]}`
+
+**Alternatives écartées.**
+| Approche | Problème |
+|---|---|
+| Le LLM écrit du code pandas exécuté par `eval`/`exec` (ex. *PandasAI*, agent pandas de LangChain) | **Faille de sécurité** : un fichier piégé ou une question malveillante peut faire exécuter n'importe quel code sur le serveur (« supprime le disque »). Et un modèle 3B écrit souvent du code faux. Interdit par le cahier des charges. |
+| Le LLM écrit du SQL | Même risque (injection), et les données sont dans des fichiers, pas en base. |
+| JSON demandé « dans le prompt », sans contrainte | Un 3B ajoute du texte autour, oublie une accolade, invente des colonnes : il faut le réparer, et ça échoue de temps en temps. |
+| Fonctions (*tool calling*) | Possible avec Qwen2.5, mais moins fiable en 3B que la grammaire et sans `enum` dynamique aussi strict. |
+
+> **Jury :** *« Qu'est-ce qui empêche le LLM de faire n'importe quoi ? »*
+> **Réponse :** Trois barrières. 1) La grammaire d'Ollama : la sortie est forcément un JSON du bon format, avec des colonnes qui existent. 2) La validation Python : opération dans une liste fermée, colonnes vérifiées, types vérifiés. 3) Aucune exécution de code : chaque opération est une fonction écrite à l'avance.
+
+## 25. Liste fermée d'opérations et validation
+
+**Opérations** (`services/stats.py`) : `sum`, `mean`, `median`, `count`, `min`, `max`, `top`, `groupby`, `trend`, `percentage`. **Filtres** : `==`, `!=`, `>`, `>=`, `<`, `<=`, `contient`, `annee`, `mois`. On peut aussi mesurer un **produit de deux colonnes** (prix × quantité).
+
+**Validation** (`router.valider_plan`) : opération autorisée ; colonnes existantes (tolère la casse) ; mesure numérique ; filtre valide (sinon il est ignoré et tracé) ; colonne de date lisible pour `trend` ; `n` borné entre 1 et 50. **En cas de problème, le système demande une précision** au lieu de deviner.
+
+**Filtres ancrés dans la question (hallucination réelle corrigée).** Pendant les mesures, pour « Quel est le chiffre d'affaires par région ? », le LLM a ajouté le filtre `Status == Pending`, recopié d'un exemple de mon prompt. Le résultat portait donc sur 305 lignes au lieu de 1000 (Nabeul 1 109 536 au lieu de Sousse 3 607 262). La ligne de provenance l'a rendu visible, puis deux corrections ont suivi :
+1. plus d'exemples concrets de valeurs dans le prompt système ;
+2. **un filtre n'est conservé que si sa valeur est écrite dans la question** (« Pending », « 2023 », « mars » → 3). Un filtre rejeté est **signalé** dans la réponse au lieu d'être ignoré en silence. Testé automatiquement.
+
+*Limite* : une valeur écrite dans une autre langue que celle du fichier (« تونس » pour `Tunis`) n'est pas reconnue comme ancrée. Le filtre est alors signalé comme non appliqué, et l'utilisateur doit écrire la valeur telle qu'elle apparaît dans le fichier.
+
+**Prompt réduit** : le LLM reçoit seulement les colonnes, leur type (dérivé de `df.dtypes` : nombre / date / texte) et **3 lignes d'exemple**. Plus de `describe()` complet.
+
+**Robustesse des types (problèmes trouvés en testant).**
+- `INV-10001` était pris pour un nombre (on retirait les lettres). On ne convertit maintenant que les valeurs qui ont la **forme** d'un nombre, éventuellement avec une unité : « 100 DT », « 12 % », « € 45 ».
+- « 1,200.50 » (format anglais) et « 1.234,56 » (format français) sont tous deux lus correctement : le dernier séparateur est le séparateur décimal.
+
+## 26. Résolution déterministe des colonnes et ambiguïté
+
+**Constat (mesuré).** Le LLM 3B choisissait la mauvaise colonne : `price` pour « ventes », `Total_Price` comme regroupement pour « top 3 products », et il ignorait « par région ». Ces choix pouvaient en plus varier selon la langue.
+
+**Choix.** `services/semantique.py` décide **par règles**, de façon identique dans toutes les langues :
+
+1. **Colonne citée** explicitement (« moyenne de stock_quantity », « price × stock_quantity ») : elle est respectée.
+2. **Concept métier** reconnu (ventes / chiffre d'affaires / sales / مبيعات / الإيرادات ; quantité ; prix) : on prend la colonne correspondante, par ordre de priorité (`Sales`, puis `Total_Price`, puis `Montant`…). La réponse l'indique : « « ventes » a été interprété comme la colonne `Total_Price` ».
+3. **Concept sans colonne** : **demande de précision** avec les options calculées par pandas (cas réel du point 22).
+4. **Regroupement** : « par X », « by X », « pour chaque X », « top N X », « حسب X ». Le mot est relié à une colonne catégorielle grâce aux pluriels, à un dictionnaire de synonymes français / anglais / arabe (produit = product = منتج) et à l'article arabe « ال ».
+5. **Période** : « par mois », « monthly », « شهري » donnent une évolution (`trend`).
+
+**Ce que garde le LLM.** Le type de calcul et les filtres (« statut Pending », « en 2023 »), qu'il comprend bien.
+
+**Détail technique.** La normalisation Unicode retire les hamzas de l'arabe (« أفضل » devient « افضل ») : les dictionnaires et les motifs arabes sont donc normalisés de la même façon (sinon « الإيرادات » n'était jamais reconnu ; trouvé par les tests).
+
+## 27. Reformulation par le LLM sous contrôle
+
+**Règle : la valeur affichée est toujours celle de pandas.**
+
+1. Une **phrase modèle** est construite en Python, dans la langue de l'utilisateur, avec les nombres formatés : « **Total de `Total_Price`** : **16 037 348** » (fr), « 16,037,348 » (en, ar).
+2. Pour un résultat **à une seule valeur**, le LLM peut écrire une phrase plus naturelle. Elle passe par un **garde-fou** : chaque nombre qu'elle contient doit correspondre (à 0,5 % près) à une valeur du résultat pandas ou de la question, sinon elle est **rejetée**. Le garde-fou gère les chiffres arabes-indiens (٤٢٤) et les formats français et anglais. Testé : « 105,00 » est rejeté, « ٤٢٤ » est accepté.
+3. Une **ligne de provenance** est toujours ajoutée : « 🔢 *Calculé par pandas — opération : `sum` · colonne : `Total_Price` · 1 000 lignes utilisées sur 1 000* », avec les filtres et les valeurs ignorées.
+
+**Pas de reformulation des tableaux.** Mesuré : pour « CA par région », le LLM recopiait les 5 lignes (78 tokens, +15 s) alors que le tableau est déjà affiché. La reformulation est réservée aux résultats à une valeur. `REFORMULATION_LLM=0` dans `.env` la désactive complètement.
+
+## 28. Temps de réponse : mesures avant / après
+
+**Protocole.** Les 6 mêmes questions, dans le même ordre, sur la même machine, avec un appel de préchauffage non mesuré. Le temps est mesuré de bout en bout sur `/ask_ia`, et les tokens sont relevés dans les métadonnées d'Ollama.
+
+| # | Question (fichier) | Avant : temps | Avant : tokens du prompt | Avant : réponse | Après : temps | Après : tokens (routeur + reformulation) | Après : réponse |
+|---|---|---|---|---|---|---|---|
+| 1 | Total des ventes ? (produits_magasin) | 40,3 s | 929 | « 150 » ❌ | **11,3 s** | 547 | précision : 10,7 / 275 / 424 ✅ |
+| 2 | مجموع المبيعات؟ (produits_magasin) | 41,7 s | 957 | « 100,30 دينار » ❌ | **5,4 s** | 546 | même précision ✅ |
+| 3 | Total des ventes ? (sales_data) | 50,8 s | 2 642 | « 16037.35 » ❌ | **24,8 s** | 746 + 168 | **16 037 348** ✅ |
+| 4 | CA par région ? | 65,5 s | 2 644 | camembert, 2 régions sur 5 ❌ | **5,9 s** | 749 | 5 régions, valeurs exactes ✅ |
+| 5 | Factures au statut Pending ? | 45,9 s | 2 651 | « 141 » ❌ | **12,7 s** | 748 + 161 | **305** ✅ |
+| 6 | Top 3 products by total sales? | 123,6 s | 2 632 | Printer / Chair / Keyboard ❌ | **6,9 s** | 748 | **Mouse / Laptop / Keyboard** ✅ |
+| | **Moyenne** | **61,3 s** | **~2 080** | **0 / 6 exactes** | **11,2 s** (÷ 5,5) | **~680** | **6 / 6 exactes** |
+
+*Résultats bruts : `mesures/phase3_avant.json` et `mesures/phase3_apres.json` (script : `tests/benchmark_routeur.py`).*
+
+**Autres chemins (mesurés à part) :**
+- **Liste des valeurs** (« Quelles sont les régions ? ») : **0,04 s**, sans appel au LLM (avant : 42 à 69 s et 4 régions sur 5).
+- **Question texte (RAG)** (« Qui est le client de la facture INV-10002 ? ») : **environ 20 s** quand le cache de préfixe d'Ollama est chaud, **50 à 80 s** à froid (prompt de ~950 tokens). C'est le chemin le plus lent qui reste ; il ne sert plus qu'aux vraies questions descriptives.
+
+**Pourquoi la question 3 reste à ~25 s.** C'est la première question sur un **nouveau fichier** : Ollama doit lire tout le prompt du routeur (~750 tokens), sans cache. Sur le même fichier, les questions 4 à 6 ne prennent que 5 à 7 s.
+
+**Les 5 optimisations, par ordre d'effet :**
+
+| # | Optimisation | Effet mesuré |
+|---|---|---|
+| 1 | **Pas de `describe()` complet** : colonnes, types et 3 lignes | Prompt de **~2 640 à ~730 tokens** (sales_data) |
+| 2 | **100 % CPU** (`OLLAMA_NUM_GPU=0`) | Génération **3,2 → 8,7 tokens/s**. Sur la MX130 (2 Go), Ollama mettait 42 % du modèle sur le GPU ; les échanges CPU ↔ GPU à chaque token coûtaient plus que le calcul gagné. |
+| 3 | **`127.0.0.1` au lieu de `localhost`** | **2,3 s → 0,3 s par connexion**. Sous Windows, `localhost` essaie d'abord IPv6 (`::1`) alors qu'Ollama n'écoute qu'en IPv4 ; il y avait 2 à 3 connexions par question. |
+| 4 | **Pas d'appel LLM inutile** | Intents évidents par règles (0 appel), pas de reformulation des tableaux, vérification d'Ollama gardée 30 s |
+| 5 | **`keep_alive=30m` + préchauffage** au démarrage de Flask | Le modèle reste en RAM : pas de rechargement (~10 s) à la première question ni après 5 min d'inactivité |
+
+| 6 | **Recherche hybride** dans le RAG (mot-clé exact puis vecteurs) + **5 extraits au lieu de 8** | Prompt RAG de ~1 420 à ~950 tokens ; « facture INV-10002 » retrouvée à coup sûr (les embeddings ne la trouvaient pas) |
+
+**Limite restante.** Le premier appel sur un **nouveau fichier** reste plus lent : Ollama doit lire tout le prompt (~750 tokens à environ 40 tokens/s sur ce CPU). Les questions suivantes sur le même fichier profitent du **cache de préfixe** d'Ollama : l'appel au routeur passe d'environ 19 s à 5 s.
+
+> **Jury :** *« Pourquoi ne pas utiliser le GPU ? »*
+> **Réponse :** Je l'ai mesuré : la MX130 n'a que 2 Go et Ollama n'y met qu'une partie du modèle ; les allers-retours CPU ↔ GPU à chaque token rendent la génération 2,7 fois plus lente (3,2 contre 8,7 tokens/s). Le réglage est dans `.env` : sur une machine avec un vrai GPU, il suffit de vider `OLLAMA_NUM_GPU`.
+
+## 29. Modèle demandé hors domaine
+
+**Choix.** `services/ml/registry.py` décrit les modèles disponibles par domaine : tous les domaines ont la prévision du CA et la détection d'anomalies ; la Banque a en plus le churn. Si un utilisateur E-commerce demande « quels clients risquent de partir ? », le système répond poliment que ce modèle est réservé au domaine **Banque**, liste les modèles disponibles pour lui et rappelle qu'on peut changer de domaine dans le profil (testé).
+
+Le registre est créé dès la Phase 3 pour que le routeur l'utilise. La Phase 5 y branchera l'exécution des modèles, sans changer le routeur.

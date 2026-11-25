@@ -1,0 +1,92 @@
+[
+  {
+    "question": "Quel est le total des ventes ?",
+    "fichier": 35,
+    "duree_s": 40.3,
+    "appels_llm": [
+      {
+        "prompt_tokens": 929,
+        "sortie_tokens": 13,
+        "duree_s": 30.4
+      }
+    ],
+    "intent": null,
+    "reponse": "Le total des ventes est de 150.",
+    "attendu": "pas de colonne ventes : price=10,7 / stock=275 / price×stock=424"
+  },
+  {
+    "question": "ما هو مجموع المبيعات؟",
+    "fichier": 35,
+    "duree_s": 41.7,
+    "appels_llm": [
+      {
+        "prompt_tokens": 957,
+        "sortie_tokens": 18,
+        "duree_s": 32.2
+      }
+    ],
+    "intent": null,
+    "reponse": "مجموع المبيعات هو 100.30 دينار.",
+    "attendu": "idem"
+  },
+  {
+    "question": "Quel est le total des ventes ?",
+    "fichier": 31,
+    "duree_s": 50.8,
+    "appels_llm": [
+      {
+        "prompt_tokens": 2642,
+        "sortie_tokens": 9,
+        "duree_s": 40.7
+      }
+    ],
+    "intent": null,
+    "reponse": "16037.35",
+    "attendu": "somme Total_Price"
+  },
+  {
+    "question": "Quel est le chiffre d'affaires par région ?",
+    "fichier": 31,
+    "duree_s": 65.5,
+    "appels_llm": [
+      {
+        "prompt_tokens": 2644,
+        "sortie_tokens": 66,
+        "duree_s": 55.4
+      }
+    ],
+    "intent": null,
+    "reponse": "```json\n{\n  \"type_graph\": \"pie\",\n  \"title\": \"Chiffre d'affaires par région\",\n  \"data\": {\n    \"x\": [\"Bizerte\", \"Sousse\"],\n    \"y\": [11748, 11748]\n  }\n}\n```",
+    "attendu": "groupby Region sum Total_Price"
+  },
+  {
+    "question": "Combien de factures ont le statut Pending ?",
+    "fichier": 31,
+    "duree_s": 45.9,
+    "appels_llm": [
+      {
+        "prompt_tokens": 2651,
+        "sortie_tokens": 4,
+        "duree_s": 35.5
+      }
+    ],
+    "intent": null,
+    "reponse": "141",
+    "attendu": "count Status == Pending"
+  },
+  {
+    "question": "What are the top 3 products by total sales?",
+    "fichier": 31,
+    "duree_s": 123.6,
+    "appels_llm": [
+      {
+        "prompt_tokens": 2632,
+        "sortie_tokens": 24,
+        "duree_s": 113.7
+      }
+    ],
+    "intent": null,
+    "reponse": "- Printer: 498\n- Chair: 9444\n- Keyboard: 54",
+    "attendu": "top 3 Product sum Total_Price"
+  }
+]

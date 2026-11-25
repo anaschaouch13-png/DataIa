@@ -11,6 +11,7 @@ Mistral), il est supprimé puis reconstruit automatiquement.
 
 import logging
 import os
+import re
 import shutil
 from typing import List
 
@@ -64,9 +65,38 @@ def charger_ou_construire_index(file_id: int, textes: List[str], forcer: bool = 
 
 
 def rechercher(index: FAISS, question: str, nb_lignes: int, k: int = RAG_TOP_K) -> List[str]:
-    """Renvoie les k extraits les plus proches de la question."""
+    """Renvoie les k extraits les plus proches de la question (similarité vectorielle)."""
     k = max(1, min(nb_lignes, k))
     return [doc.page_content for doc in index.similarity_search(question, k=k)]
+
+
+def lignes_exactes(df: pd.DataFrame, question: str, maximum: int = 5) -> List[int]:
+    """
+    Recherche par mot-clé : lignes dont une cellule est EXACTEMENT un mot/identifiant de
+    la question (« INV-10002 », « Gamma Store »). Les embeddings sont mauvais sur les
+    identifiants : testé, la ligne INV-10002 n'était pas dans les 8 extraits vectoriels.
+    """
+    q = " " + re.sub(r"\s+", " ", question.lower()) + " "
+    trouvees: List[int] = []
+    for colonne in df.columns:
+        valeurs = df[colonne].dropna().astype(str).str.strip().str.lower()
+        valeurs = valeurs[valeurs.str.len() >= 4]                   # évite « 1 », « IT »…
+        if valeurs.nunique() < 0.5 * len(df):                       # seulement les colonnes très variées
+            continue                                                # (identifiants, noms), pas les catégories
+        for i, v in valeurs.items():
+            if re.search(r"(?<![\w-])" + re.escape(v) + r"(?![\w-])", q):
+                trouvees.append(i)
+                if len(trouvees) >= maximum:
+                    return trouvees
+    return trouvees
+
+
+def recherche_hybride(index: FAISS, df: pd.DataFrame, textes: List[str], question: str,
+                      k: int = RAG_TOP_K) -> List[str]:
+    """Lignes trouvées par mot-clé exact d'abord, puis complétées par la similarité vectorielle."""
+    exactes = [textes[i] for i in lignes_exactes(df, question)]
+    vectorielles = [t for t in rechercher(index, question, len(textes), k) if t not in exactes]
+    return (exactes + vectorielles)[:k]
 
 
 def supprimer_index(file_id: int):
