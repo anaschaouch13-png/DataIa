@@ -83,7 +83,12 @@ UPLOAD_FOLDER = _chemin("UPLOAD_FOLDER", "uploads")
 VECTOR_FOLDER = _chemin("VECTOR_FOLDER", os.path.join("uploads", "vector_indices"))
 REPORT_FOLDER = _chemin("REPORT_FOLDER", os.path.join("uploads", "rapports"))
 
-for _dossier in (UPLOAD_FOLDER, VECTOR_FOLDER, REPORT_FOLDER):
+BACKUP_FOLDER = _chemin("BACKUP_FOLDER", "backups")          # sauvegardes mysqldump
+MIGRATIONS_FOLDER = _chemin("MIGRATIONS_FOLDER", "migrations")  # scripts SQL de migration
+# Chemin de mysqldump (WampServer ne l'ajoute pas au PATH)
+MYSQLDUMP_PATH = os.getenv("MYSQLDUMP_PATH", "mysqldump")
+
+for _dossier in (UPLOAD_FOLDER, VECTOR_FOLDER, REPORT_FOLDER, BACKUP_FOLDER):
     os.makedirs(_dossier, exist_ok=True)
 
 # ================== Multilingue ==================

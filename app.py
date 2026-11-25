@@ -7,7 +7,7 @@ from functools import wraps
 
 import pandas as pd
 from flask import (Flask, abort, flash, jsonify, redirect, render_template,
-                   request, send_file, url_for)
+                   request, send_file, session, url_for)
 from flask_login import (LoginManager, UserMixin, current_user, login_required,
                          login_user, logout_user)
 from fpdf import FPDF
@@ -17,6 +17,7 @@ from werkzeug.utils import secure_filename
 import config
 from services import rag
 from services.db import get_db_connection
+from services.domaines import DOMAINE_PAR_DEFAUT, DOMAINES, domaine_valide
 from services.langue import analyser_question, message
 from services.llm import (OllamaIndisponibleError, generer_reponse,
                           verifier_ollama)
@@ -61,13 +62,21 @@ login_manager.login_view = 'login'
 
 
 class User(UserMixin):
-    def __init__(self, id_user, nom, email, password, role, bloque):
+    def __init__(self, id_user, nom, email, password, role, bloque, domaine=DOMAINE_PAR_DEFAUT):
         self.id = id_user
         self.nom = nom
         self.email = email
         self.password = password
         self.role = role
         self.bloque = bloque
+        self.domaine = domaine   # Phase 2 : détermine les modèles ML disponibles (Phase 5)
+
+    @classmethod
+    def depuis_ligne(cls, ligne: dict) -> "User":
+        """Construit l'utilisateur à partir d'une ligne de la table `utilisateurs`."""
+        return cls(ligne['id_utilisateur'], ligne['nom_utilisateur'], ligne['email'],
+                   ligne['mot_de_passe'], ligne['role'], ligne['est_bloque'],
+                   ligne.get('domaine') or DOMAINE_PAR_DEFAUT)
 
 
 @login_manager.user_loader
@@ -80,10 +89,27 @@ def load_user(user_id):
     conn.close()
     # Un compte bloqué par l'admin perd immédiatement sa session (avant : il restait connecté)
     if user_data and not user_data.get('est_bloque'):
-        return User(user_data['id_utilisateur'], user_data['nom_utilisateur'],
-                    user_data['email'], user_data['mot_de_passe'],
-                    user_data['role'], user_data['est_bloque'])
+        return User.depuis_ligne(user_data)
     return None
+
+
+@app.after_request
+def interdire_cache_pages_connectees(reponse):
+    """
+    Après déconnexion, le bouton « Précédent » du navigateur ne doit pas réafficher
+    une page protégée depuis le cache : les pages vues par un utilisateur connecté
+    sont marquées « no-store ».
+    """
+    if current_user.is_authenticated:
+        reponse.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
+        reponse.headers['Pragma'] = 'no-cache'
+    return reponse
+
+
+@app.context_processor
+def injecter_domaines():
+    """Rend la liste des domaines disponible dans tous les templates Jinja."""
+    return {"DOMAINES": DOMAINES}
 
 # ================== 4. Routes ==================
 
@@ -95,24 +121,40 @@ def landing():
 
 @app.route('/signup', methods=['GET', 'POST'])
 def signup():
+    formulaire = {}
     if request.method == 'POST':
-        nom = request.form.get('nom_utilisateur')
-        email = request.form.get('email')
-        password = generate_password_hash(request.form.get('password'))
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        try:
-            cursor.execute("INSERT INTO utilisateurs (nom_utilisateur, email, mot_de_passe) VALUES (%s, %s, %s)",
-                           (nom, email, password))
-            conn.commit()
-            flash('Compte créé! Connectez-vous.', 'success')
-            return redirect(url_for('login'))
-        except Exception as e:
-            flash(f"Erreur: {e}", "danger")
-        finally:
-            cursor.close()
-            conn.close()
-    return render_template('signup.html')
+        nom = (request.form.get('nom_utilisateur') or '').strip()
+        email = (request.form.get('email') or '').strip().lower()
+        mot_de_passe = request.form.get('password') or ''
+        domaine = request.form.get('domaine') or ''
+        formulaire = {'nom_utilisateur': nom, 'email': email, 'domaine': domaine}
+
+        # Validation côté serveur (le <select> HTML peut être contourné)
+        if not nom or not email or not mot_de_passe:
+            flash("Tous les champs sont obligatoires.", "danger")
+        elif not domaine_valide(domaine):
+            flash("Veuillez choisir un domaine d'activité dans la liste.", "danger")
+        else:
+            conn = get_db_connection()
+            cursor = conn.cursor()
+            try:
+                cursor.execute("INSERT INTO utilisateurs (nom_utilisateur, email, mot_de_passe, domaine) "
+                               "VALUES (%s, %s, %s, %s)",
+                               (nom, email, generate_password_hash(mot_de_passe), domaine))
+                conn.commit()
+                flash('Compte créé ! Connectez-vous.', 'success')
+                return redirect(url_for('login'))
+            except Exception as e:
+                # Avant : le message SQL brut était affiché à l'utilisateur
+                if getattr(e, 'errno', None) == 1062:   # ER_DUP_ENTRY : email déjà utilisé
+                    flash("Un compte existe déjà avec cet email.", "danger")
+                else:
+                    log.exception("Erreur à l'inscription")
+                    flash("Erreur lors de la création du compte.", "danger")
+            finally:
+                cursor.close()
+                conn.close()
+    return render_template('signup.html', formulaire=formulaire)
 
 
 @app.route('/login', methods=['GET', 'POST'])
@@ -123,7 +165,7 @@ def login():
 
         conn = get_db_connection()
         cursor = conn.cursor(dictionary=True)
-        cursor.execute("SELECT * FROM utilisateurs WHERE email = %s", (email,))
+        cursor.execute("SELECT * FROM utilisateurs WHERE email = %s", ((email or '').strip().lower(),))
         user_data = cursor.fetchone()
         cursor.close()
         conn.close()
@@ -137,10 +179,9 @@ def login():
                 return render_template('login.html')
 
             # 3. صنع الـ Object User (تأكدي أن الكلاس User فيها الـ role و est_bloque)
-            user = User(user_data['id_utilisateur'], user_data['nom_utilisateur'],
-                        user_data['email'], user_data['mot_de_passe'],
-                        user_data['role'], user_data['est_bloque'])
+            user = User.depuis_ligne(user_data)
 
+            session.clear()          # pas de données d'une session précédente
             login_user(user)
 
             # 4. التوجيه حسب الـ Role (Admin يمشي للـ admin_dashboard والـ User يمشي للـ dashboard العادية)
@@ -176,6 +217,38 @@ def dashboard():
     cursor.close()
     conn.close()
     return render_template('dashboard.html', fichiers=fichiers, questions_count=q_count)
+
+
+@app.route('/profil', methods=['GET', 'POST'])
+@login_required
+def profil():
+    """Profil : l'utilisateur peut modifier son nom et son domaine d'activité."""
+    if request.method == 'POST':
+        nom = (request.form.get('nom_utilisateur') or '').strip()
+        domaine = request.form.get('domaine') or ''
+        if not nom:
+            flash("Le nom d'utilisateur est obligatoire.", "danger")
+        elif not domaine_valide(domaine):
+            flash("Domaine d'activité invalide.", "danger")
+        else:
+            conn = get_db_connection()
+            cursor = conn.cursor()
+            cursor.execute("UPDATE utilisateurs SET nom_utilisateur = %s, domaine = %s WHERE id_utilisateur = %s",
+                           (nom, domaine, current_user.id))
+            conn.commit()
+            cursor.close()
+            conn.close()
+            flash("Profil mis à jour.", "success")
+            return redirect(url_for('profil'))
+
+    conn = get_db_connection()
+    cursor = conn.cursor(dictionary=True)
+    cursor.execute("SELECT nom_utilisateur, email, role, domaine, date_inscription "
+                   "FROM utilisateurs WHERE id_utilisateur = %s", (current_user.id,))
+    infos = cursor.fetchone()
+    cursor.close()
+    conn.close()
+    return render_template('profil.html', infos=infos)
 
 
 @app.route('/chat/<int:file_id>')
@@ -468,12 +541,15 @@ def admin_dashboard():
         all_users = cursor.fetchall()
 
         # 3
+        # LEFT JOIN : un rapport dont la question a été supprimée (id_question NULL)
+        # reste visible pour l'admin au lieu de disparaître de la liste.
         query = """
-            SELECT r.id_rapport, q.question_texte, u.nom_utilisateur as user_name, 
-                   r.date_generation, r.chemin_resume 
+            SELECT r.id_rapport, COALESCE(q.question_texte, '(question supprimée)') AS question_texte,
+                   COALESCE(u.nom_utilisateur, '-') AS user_name,
+                   r.date_generation, r.chemin_resume
             FROM rapports r
-            JOIN questions q ON r.id_question = q.id_question
-            JOIN utilisateurs u ON q.id_utilisateur = u.id_utilisateur
+            LEFT JOIN questions q ON r.id_question = q.id_question
+            LEFT JOIN utilisateurs u ON q.id_utilisateur = u.id_utilisateur
             ORDER BY r.date_generation DESC
         """
         cursor.execute(query)
@@ -572,10 +648,35 @@ def toggle_user(user_id):
         return f"Erreur: {str(e)}"
 
 
-@app.route('/logout')
+@app.route('/admin/set_domaine/<int:user_id>', methods=['POST'])
 @login_required
+@admin_required
+def set_domaine(user_id):
+    """L'administrateur modifie le domaine d'activité d'un utilisateur."""
+    domaine = request.form.get('domaine') or ''
+    if not domaine_valide(domaine):
+        flash("Domaine invalide.", "danger")
+        return redirect(url_for('admin_dashboard'))
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("UPDATE utilisateurs SET domaine = %s WHERE id_utilisateur = %s", (domaine, user_id))
+    conn.commit()
+    cursor.close()
+    conn.close()
+    return redirect(url_for('admin_dashboard'))
+
+
+@app.route('/logout', methods=['GET', 'POST'])
 def logout():
+    """
+    Déconnexion : supprime l'utilisateur de la session (logout_user) PUIS vide
+    toute la session (session.clear) et redirige vers la page de connexion.
+    Pas de @login_required : un utilisateur déjà déconnecté (session expirée)
+    est simplement renvoyé vers /login au lieu d'obtenir une erreur.
+    """
     logout_user()
+    session.clear()
+    flash("Vous êtes déconnecté.", "success")
     return redirect(url_for('login'))
 
 

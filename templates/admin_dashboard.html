@@ -60,8 +60,19 @@
           <h2 class="fw-bold m-0" style="color: var(--violet-deep)">Admin Console</h2>
           <p class="text-muted">Gestion du système DataIA</p>
         </div>
-        <a href="/dashboard" class="btn btn-outline-primary px-4"><i class="fas fa-home me-2"></i>Dashboard</a>
+        <div class="d-flex gap-2">
+          <a href="{{ url_for('dashboard') }}" class="btn btn-outline-primary px-4"><i class="fas fa-home me-2"></i>Dashboard</a>
+          <a href="{{ url_for('profil') }}" class="btn btn-outline-secondary px-3"><i class="fas fa-user-circle me-2"></i>Profil</a>
+          <!-- Phase 2 : la page admin n'hérite pas de base.html, le bouton de déconnexion manquait -->
+          <a href="{{ url_for('logout') }}" class="btn btn-outline-danger px-3" id="btn-deconnexion"><i class="fas fa-sign-out-alt me-2"></i>Déconnexion</a>
+        </div>
       </div>
+
+      {% with messages = get_flashed_messages(with_categories=true) %}
+      {% for category, message in messages %}
+      <div class="alert alert-{{ category }} py-2">{{ message }}</div>
+      {% endfor %}
+      {% endwith %}
 
       <div class="row g-4 mb-5">
         <div class="col-md-4">
@@ -97,6 +108,7 @@
             <thead>
               <tr>
                 <th>Nom d'utilisateur</th>
+                <th>Domaine</th>
                 <th class="text-center">Activité (Filtrer)</th>
                 <th>Statut</th>
                 <th class="text-end">Actions</th>
@@ -105,7 +117,18 @@
             <tbody>
               {% for u in all_users %}
               <tr>
-                <td><span class="fw-semibold text-dark">{{ u.nom_utilisateur }}</span></td>
+                <td><span class="fw-semibold text-dark">{{ u.nom_utilisateur }}</span><br /><small class="text-muted">{{ u.email }}</small></td>
+                <td>
+                  <!-- Phase 2 : l'admin voit et modifie le domaine (envoi automatique au changement) -->
+                  <form action="{{ url_for('set_domaine', user_id=u.id_utilisateur) }}" method="POST" class="m-0">
+                    <select name="domaine" class="form-select form-select-sm" style="min-width: 130px; border-radius: 10px"
+                            onchange="this.form.submit()" aria-label="Domaine de {{ u.nom_utilisateur }}">
+                      {% for d in DOMAINES %}
+                      <option value="{{ d }}" {{ 'selected' if u.domaine == d else '' }}>{{ d }}</option>
+                      {% endfor %}
+                    </select>
+                  </form>
+                </td>
                 <td class="text-center">
                   <button onclick="filterArchive('{{ u.nom_utilisateur }}')" class="btn badge-count">
                     {{ u.nb_questions }} <i class="fas fa-eye ms-1"></i>

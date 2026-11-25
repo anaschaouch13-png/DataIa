@@ -27,6 +27,7 @@
               name="nom_utilisateur"
               class="form-control bg-light border-0"
               placeholder="nom123"
+              value="{{ formulaire.nom_utilisateur if formulaire else '' }}"
               required
             />
           </div>
@@ -43,9 +44,29 @@
               name="email"
               class="form-control bg-light border-0"
               placeholder="nom@dataia.com"
+              value="{{ formulaire.email if formulaire else '' }}"
               required
             />
           </div>
+        </div>
+
+        <!-- Phase 2 : domaine d'activité (détermine les modèles ML proposés) -->
+        <div class="mb-3">
+          <label class="form-label" for="domaine">Domaine d'activité</label>
+          <div class="input-group">
+            <span class="input-group-text bg-light border-0"
+              ><i class="fas fa-briefcase text-muted"></i
+            ></span>
+            <select id="domaine" name="domaine" class="form-select bg-light border-0" required>
+              <option value="" disabled {{ 'selected' if not (formulaire and formulaire.domaine) else '' }}>
+                Choisissez votre domaine…
+              </option>
+              {% for d in DOMAINES %}
+              <option value="{{ d }}" {{ 'selected' if formulaire and formulaire.domaine == d else '' }}>{{ d }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <small class="text-muted">Les modèles d'analyse proposés dépendent de votre domaine (modifiable dans votre profil).</small>
         </div>
 
         <div class="mb-4">
