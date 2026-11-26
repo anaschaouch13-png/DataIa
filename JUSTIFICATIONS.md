@@ -68,6 +68,12 @@
   51. [Simulateur what-if](#51-simulateur-what-if)
   52. [Graphiques dans React : Plotly plutôt que Recharts](#52-graphiques-dans-react--plotly-plutôt-que-recharts)
   53. [Où vit le frontend ?](#53-où-vit-le-frontend-)
+- **Phase 7 — Support multi-formats**
+  54. [Parser unifié](#54-parser-unifié)
+  55. [OCR : RapidOCR ou Tesseract](#55-ocr--rapidocr-ou-tesseract)
+  56. [Pièges des tableaux de documents](#56-pièges-des-tableaux-de-documents)
+  57. [Réponses attendues sur le PDF et l'image](#57-réponses-attendues-sur-le-pdf-et-limage)
+  58. [Aperçu et questions suggérées (rien d'automatique)](#58-aperçu-et-questions-suggérées-rien-dautomatique)
 
 ---
 
@@ -946,3 +952,88 @@ Le frontend fourni dessinait avec **Recharts** les valeurs du JSON écrit par le
 ## 53. Où vit le frontend ?
 
 Le frontend fourni était dans `DataIA_Loal/frontend`, **hors du dépôt Git** : ses modifications n'auraient pas été versionnées. Ses sources ont été copiées dans **`DataIa/frontend/`**, qui est désormais la version de référence (commitée avec la Phase 6). L'original n'a pas été modifié. Les dépendances (`node_modules`) sont partagées par une jonction Windows ; pour une installation neuve : `npm install` puis `npm run build` dans `DataIa/frontend` (ou simplement `demarrer.bat`).
+
+---
+
+# Phase 7 — Support multi-formats
+
+## 54. Parser unifié
+
+**Choix.** `services/parsers.py` transforme **tout fichier** en un `ResultatParsing` : un ou plusieurs tableaux pandas, le texte du document pour le RAG, une description de la source et des remarques. Le reste de la plateforme (routeur, pandas, graphiques, ML) ne sait pas d'où viennent les données : un PDF se traite comme un CSV.
+
+| Format | Outil | Détail |
+|---|---|---|
+| CSV | pandas + `charset-normalizer` + `csv.Sniffer` | Encodage détecté (UTF-8 essayé d'abord, sinon détection : un CSV Excel français est souvent en latin-1) ; séparateur détecté (`,` `;` tabulation `\|`) |
+| Excel | pandas | **Toutes les feuilles** : fusionnées si elles ont les mêmes colonnes (colonne `feuille` ajoutée), sinon conservées séparément |
+| PDF | `pdfplumber` | Tableaux de toutes les pages (un tableau coupé sur deux pages est recollé) et texte |
+| Image | RapidOCR | Texte, puis tableau reconstruit à partir des positions des mots (point 55) |
+
+Commun à tous les formats : les nombres écrits en texte sont convertis (« 18 521 », « 1 234,56 »), et les en-têtes sont nettoyés. Le résultat est **mis en cache** (fichier + date de modification) : un PDF ou une image n'est analysé qu'une fois.
+
+**Installation prudente.** La dernière version de `pdfplumber` (0.11.11) imposait de passer **Pillow 12.1 → 13.0**, un package déjà utilisé par matplotlib et kaleido. La version 0.11.9, compatible avec Pillow 12.1, a été choisie (vérifié par `pip install --dry-run`) : aucun package existant n'a été modifié. C'est la même prudence qu'avec `langchain-ollama`.
+
+> **Jury :** *« Pourquoi pdfplumber et pas PyPDF2 ? »*
+> **Réponse :** PyPDF2 n'extrait que du texte brut ; pdfplumber reconnaît les **tableaux** (lignes et colonnes) à partir de la mise en page, ce qui permet à pandas de calculer dessus.
+
+## 55. OCR : RapidOCR ou Tesseract
+
+Deux options compatibles avec 8 Go de RAM :
+
+| | **RapidOCR** (`rapidocr-onnxruntime`) ✅ | **Tesseract** (`pytesseract`) |
+|---|---|---|
+| Installation | `pip` seulement : les modèles ONNX (~15 Mo) sont inclus | Programme Windows à installer à part, plus les langues (`fra`, `ara`), plus le PATH |
+| Moteur | Réseaux de neurones (détection + reconnaissance PaddleOCR, convertis en ONNX), CPU | Moteur LSTM classique |
+| Précision sur le tableau de test | **31 zones, confiance moyenne 99 %, 8 lignes sur 8 exactes** | Bonne sur du texte propre ; plus sensible aux tableaux et aux polices |
+| Position des mots | Oui (boîtes) : permet de reconstruire le tableau | Oui (`image_to_data`) |
+| Arabe | **Limité** (modèles chinois / latin par défaut) | **Bon** avec le pack `ara` |
+| Temps (image 1 300 × 760) | ~4 s la première fois (chargement du modèle), puis mis en cache | ~1 à 2 s |
+
+**Choix : RapidOCR**, parce qu'il ne demande aucune installation système (un seul `pip install`, reproductible sur la machine du jury) et qu'il a été parfait sur le tableau de test.
+
+**Alternative documentée pour l'arabe** : Tesseract avec la langue `ara`. Il suffirait d'ajouter une branche dans `lire_image` si l'utilisateur doit numériser des documents en arabe.
+
+**Reconstruction du tableau.** L'OCR rend des mots avec leur position. On regroupe les mots d'une même **ligne** (même hauteur), on **fusionne** les morceaux très proches (l'OCR coupe « 157 737 » en « 157 » et « 737 » : écart de −3 à +2 px, alors que deux colonnes sont séparées de plus de 280 px), puis on aligne chaque cellule sur les **colonnes de l'en-tête**. Une remarque rappelle à l'utilisateur de vérifier les valeurs importantes, car une erreur de lecture reste possible.
+
+> **Jury :** *« Pourquoi pas un LLM multimodal pour lire l'image ? »*
+> **Réponse :** Un modèle vision local (LLaVA, Qwen-VL) demande plusieurs Go de RAM en plus et peut « inventer » des chiffres. L'OCR lit exactement ce qui est écrit, avec un score de confiance, et pandas calcule ensuite.
+
+## 56. Pièges des tableaux de documents
+
+Trois problèmes rencontrés sur `rapport_ventes_2025.pdf`, et leurs corrections :
+
+1. **La ligne « Total ».** Le tableau mensuel se termine par `Total | 602 532 | …`. La garder **doublerait toutes les sommes** : le CA de Tunis deviendrait 1 205 064. Les lignes dont la première cellule est « Total », « Somme », « المجموع »… sont retirées, et c'est signalé dans l'aperçu.
+2. **Plusieurs tableaux** (CA par mois et par région ; synthèse par catégorie). `table_pour_question` choisit, pour **chaque question**, le tableau dont les colonnes ou les valeurs sont citées : « catégorie la plus forte » donne le tableau des catégories, « CA de Tunis » le tableau mensuel. Le RAG indexe **tous** les tableaux et le texte.
+3. **Le texte libre.** Le texte du PDF est découpé en **phrases**, en écartant les lignes de tableau déjà indexées. Avant cela, la phrase sur les mois de fin d'année n'était pas retrouvée par la recherche.
+
+**Règles ajoutées au routeur (découvertes avec ces fichiers).**
+- **Superlatifs** (« la catégorie la plus forte », « le produit le plus vendu », « which category has the highest… », « أعلى ») : opération `top` avec n = 1, groupée par la colonne citée, **sans appel au LLM** (0,03 s). Avant, « catégorie la plus forte » partait au RAG, qui répondait **Électroménager** (faux).
+- **Mesure par défaut**, signalée dans la réponse, quand aucune n'est nommée : colonne de CA, sinon colonne « Total », sinon l'unique colonne numérique. Une colonne qui **compte** des ventes (« Nombre de ventes ») n'est pas un chiffre d'affaires : elle est exclue du concept « ventes ».
+- **Questions de lecture** (« que dit », « résume », « explique », « what does », « لخص ») : envoyées au RAG.
+- **Noms propres arabes** (تونس → Tunis, صفاقس → Sfax…) : ajoutés à la question pour retrouver les colonnes et les valeurs écrites en lettres latines.
+
+## 57. Réponses attendues sur le PDF et l'image
+
+| Question | Réponse attendue (utilisatrice) | Réponse de DataIA | Comment |
+|---|---|---|---|
+| CA total de Tunis | 602 532 | **602 532** ✅ | Somme de la colonne `Tunis` (ligne Total exclue) |
+| Mois le plus fort | Juillet (197 381) | **Mai (237 858)** ⚠️ | Voir ci-dessous |
+| Catégorie la plus forte | Informatique (1 037 167) | **Informatique (1 037 167)** ✅ | top 1 sur `Chiffre d'affaires (TND)` |
+| Produit le plus vendu en CA | Ordinateur portable (594 715) | **Ordinateur portable (594 715)** ✅ | Image → OCR → top 1 |
+| Quantité de télévisions | 441 | **441** ✅ | Image → filtre `Produit == Télévision` |
+| ما هو رقم المعاملات الإجمالي لتونس؟ | — | **602,532** ✅ | تونس → Tunis |
+| Que dit le rapport sur la fin d'année ? | — | « novembre et décembre sont les plus forts » ✅ | RAG (texte) |
+
+**À propos du mois le plus fort.** Dans le tableau du PDF, la colonne Total vaut **237 858 en mai**, 216 636 en septembre et 197 381 en juillet. Juillet est le mois le plus fort **pour Tunis** (77 784), et sa ligne totalise 197 381 : la réponse attendue vient probablement de cette confusion. Le **texte** du même PDF affirme par ailleurs que « novembre et décembre sont les plus forts », ce qui contredit son propre tableau (187 231 et 187 990). DataIA restitue fidèlement les deux selon la question : le **calcul** sur le tableau (mai) et la **lecture** du texte (novembre / décembre). Il ne force pas une valeur attendue qui ne correspond pas aux données. Tout cela est vérifié par `tests/test_parsers.py`.
+
+## 58. Aperçu et questions suggérées (rien d'automatique)
+
+**Après l'upload**, l'utilisateur voit seulement :
+- un **aperçu** : nombre de lignes et de colonnes, colonnes et types détectés (nombre / date / texte), 5 premières lignes, source (« PDF : 2 tableaux, 1 page »), remarques (ligne Total retirée, confiance de l'OCR…) ;
+- **3 à 4 questions suggérées cliquables**, adaptées au fichier **et au domaine**. La prévision n'est suggérée que s'il y a une date et une mesure ; « Quels clients risquent de partir ? » seulement pour le domaine Banque **et** si les colonnes du modèle sont présentes ; les anomalies s'il y a au moins deux colonnes numériques.
+
+**Aucun graphique ni aucune prédiction n'est calculé à l'upload** (§37) : l'utilisateur clique sur une suggestion ou pose sa question.
+
+Dans React, l'upload ouvre directement le chat du fichier avec cet aperçu. L'API `/api/upload` renvoie l'aperçu, et `/api/files/<id>/apercu` le recalcule (il est mis en cache).
+
+> **Jury :** *« Pourquoi ne pas afficher un tableau de bord automatique à l'upload ? »*
+> **Réponse :** Parce qu'on ne sait pas encore ce qui intéresse l'utilisateur ; on lui montre ce que contient le fichier et des questions pertinentes, et chaque calcul reste à sa demande. Cela évite aussi des calculs inutiles sur une machine de 8 Go.

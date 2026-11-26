@@ -22,7 +22,7 @@ from services.domaines import DOMAINE_PAR_DEFAUT, DOMAINES, domaine_valide
 from services.langue import analyser_question, message
 from services.assistant import repondre
 from services.llm import OllamaIndisponibleError, prechauffer, verifier_ollama
-from services.parsers import charger_dataframe
+from services.parsers import analyser_fichier, charger_dataframe, table_pour_question
 from services.fichiers import (chemin_absolu, chemin_relatif, enregistrer_upload,
                                supprimer_fichier)
 
@@ -373,12 +373,16 @@ def ask_ia():
             return jsonify({"status": "error",
                             "message": message("fichier_absent_disque", langue, nom=fichier['nom_fichier'])}), 410
 
-        df = load_dataset(chemin)
+        # Phase 7 : parser unifié (CSV, Excel, PDF, image) ; si le document contient plusieurs
+        # tableaux, on prend celui qui correspond à la question ; le RAG indexe tout le document.
+        document = analyser_fichier(chemin)
+        df = table_pour_question(document, f"{question} {analyse.question_pour_llm}")
 
         # 3. Routeur hybride : pandas (calculs) | RAG (texte) | graphique | ML selon le domaine
         #    (services/assistant.py)
         reponse = repondre(df, int(file_id), question, analyse, current_user.domaine,
-                           id_utilisateur=current_user.id, source=fichier['nom_fichier'])
+                           id_utilisateur=current_user.id, source=fichier['nom_fichier'],
+                           textes_rag=document.textes_rag())
 
         # 4. Historique : on enregistre la question telle que l'utilisateur l'a écrite
         cursor.execute("INSERT INTO questions (id_utilisateur, id_fichier, question_texte, reponse_texte, date_question) "

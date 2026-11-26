@@ -170,12 +170,29 @@ def _appliquer_glossaire(texte: str, glossaire: dict) -> str:
     return resultat
 
 
+# Noms propres fréquents écrits en arabe alors que le fichier les contient en lettres latines
+# (Phase 7, mesuré : « رقم المعاملات لتونس » ne trouvait pas la colonne « Tunis »).
+NOMS_PROPRES_ARABE = {
+    "تونس": "Tunis", "صفاقس": "Sfax", "سوسة": "Sousse", "نابل": "Nabeul", "بنزرت": "Bizerte",
+    "المنستير": "Monastir", "قابس": "Gabès", "القيروان": "Kairouan", "أريانة": "Ariana", "بن عروس": "Ben Arous",
+    "فرنسا": "France", "ألمانيا": "Germany", "إسبانيا": "Spain",
+}
+
+
+def _noms_latins(question: str) -> str:
+    trouves = [latin for arabe, latin in NOMS_PROPRES_ARABE.items() if re.search(rf"(?:^|\s|ل|ب|و|في)?{arabe}", question)]
+    return f" ({', '.join(trouves)})" if trouves else ""
+
+
 def analyser_question(question: str) -> AnalyseLangue:
     """
     Détecte la langue, traduit la derja si besoin et choisit la langue de réponse.
     C'est le point d'entrée utilisé par la route /ask_ia.
     """
     langue = detecter_langue(question)
+    if langue == "ar":
+        return AnalyseLangue(langue=langue, langue_reponse="ar",
+                             question_pour_llm=question + _noms_latins(question), avertissement="")
 
     if langue == "derja_latin":
         traduite = _appliquer_glossaire(question, GLOSSAIRE_DERJA_LATIN)
@@ -191,7 +208,7 @@ def analyser_question(question: str) -> AnalyseLangue:
         return AnalyseLangue(
             langue=langue,
             langue_reponse=DERJA_ARABE_REPONSE,
-            question_pour_llm=f"{traduite}\n(السؤال الأصلي بالدارجة التونسية: « {question} »)",
+            question_pour_llm=f"{traduite}{_noms_latins(question)}\n(السؤال الأصلي بالدارجة التونسية: « {question} »)",
             avertissement=MESSAGES["avertissement_derja"][DERJA_ARABE_REPONSE],
         )
 

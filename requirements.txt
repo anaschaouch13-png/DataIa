@@ -46,6 +46,12 @@ lightgbm==4.7.0               # prévision (arbres boostés sur retards / moyenn
 statsmodels==0.15.0           # alternative ARIMA/SARIMA documentée
 xlsxwriter==3.3.4             # export Excel des données nettoyées (feuille données + rapport)
 
+# --- Formats de fichiers (Phase 7) ---
+charset-normalizer==3.4.4     # détection de l'encodage des CSV (déjà présent)
+pdfplumber==0.11.9            # tableaux + texte des PDF (0.11.9 : compatible avec Pillow 12.1, la 0.11.11 imposait Pillow 13)
+pillow==12.1.0                # images (version existante conservée)
+rapidocr-onnxruntime==1.4.4   # OCR des images, modèles ONNX embarqués, sans installation système
+
 # --- PDF (+ arabe) ---
 fpdf2==2.8.5
 arabic-reshaper==3.0.0

@@ -13,8 +13,8 @@ from werkzeug.utils import secure_filename
 import config
 from services.db import get_db_connection
 
-# Extensions acceptées (la Phase 7 ajoute PDF et images) -> valeur de fichiers.type_fichier
-EXTENSIONS = {".csv": "CSV", ".xls": "Excel", ".xlsx": "Excel"}
+# Extensions acceptées (Phase 7 : + PDF et images) -> valeur de fichiers.type_fichier (migration 003)
+EXTENSIONS = {".csv": "CSV", ".xls": "Excel", ".xlsx": "Excel", ".pdf": "PDF", ".png": "Image", ".jpg": "Image", ".jpeg": "Image"}
 
 
 def chemin_absolu(chemin: str) -> str:

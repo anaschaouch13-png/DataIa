@@ -94,7 +94,9 @@ def lignes_exactes(df: pd.DataFrame, question: str, maximum: int = 5) -> List[in
 def recherche_hybride(index: FAISS, df: pd.DataFrame, textes: List[str], question: str,
                       k: int = RAG_TOP_K) -> List[str]:
     """Lignes trouvées par mot-clé exact d'abord, puis complétées par la similarité vectorielle."""
-    exactes = [textes[i] for i in lignes_exactes(df, question)]
+    # Texte reconstruit depuis la ligne du tableau (les textes indexés peuvent contenir d'autres
+    # tableaux ou du texte libre : leurs positions ne correspondent pas aux lignes de df)
+    exactes = [" | ".join(f"{c}: {v}" for c, v in df.astype(str).iloc[i].items()) for i in lignes_exactes(df, question)]
     vectorielles = [t for t in rechercher(index, question, len(textes), k) if t not in exactes]
     return (exactes + vectorielles)[:k]
 
