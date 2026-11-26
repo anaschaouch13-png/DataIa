@@ -1,0 +1,134 @@
+[
+  {
+    "fichier": "ventes_demo_dataia.xlsx",
+    "lignes": 1793,
+    "question": "Prévois le chiffre d'affaires des 6 prochains mois",
+    "passage": 1,
+    "intent": "forecast",
+    "total_s": 4.56,
+    "modele_s": 4.56,
+    "appels_llm": 0,
+    "graphiques": 1
+  },
+  {
+    "fichier": "ventes_demo_dataia.xlsx",
+    "lignes": 1793,
+    "question": "Prévois le chiffre d'affaires des 6 prochains mois",
+    "passage": 2,
+    "intent": "forecast",
+    "total_s": 0.48,
+    "modele_s": 0.48,
+    "appels_llm": 0,
+    "graphiques": 1
+  },
+  {
+    "fichier": "demo_ventes_synthetique.csv",
+    "lignes": 5707,
+    "question": "Prévois le chiffre d'affaires des 6 prochains mois",
+    "passage": 1,
+    "intent": "forecast",
+    "total_s": 1.35,
+    "modele_s": 1.35,
+    "appels_llm": 0,
+    "graphiques": 1
+  },
+  {
+    "fichier": "demo_ventes_synthetique.csv",
+    "lignes": 5707,
+    "question": "Prévois le chiffre d'affaires des 6 prochains mois",
+    "passage": 2,
+    "intent": "forecast",
+    "total_s": 1.84,
+    "modele_s": 1.84,
+    "appels_llm": 0,
+    "graphiques": 1
+  },
+  {
+    "fichier": "ventes_demo_dataia.xlsx",
+    "lignes": 1793,
+    "question": "Détecte les anomalies",
+    "passage": 1,
+    "intent": "anomaly",
+    "total_s": 3.04,
+    "modele_s": 3.04,
+    "appels_llm": 0,
+    "graphiques": 1
+  },
+  {
+    "fichier": "ventes_demo_dataia.xlsx",
+    "lignes": 1793,
+    "question": "Détecte les anomalies",
+    "passage": 2,
+    "intent": "anomaly",
+    "total_s": 2.48,
+    "modele_s": 2.48,
+    "appels_llm": 0,
+    "graphiques": 1
+  },
+  {
+    "fichier": "demo_transactions_anomalies_synthetique.csv",
+    "lignes": 1500,
+    "question": "Détecte les anomalies",
+    "passage": 1,
+    "intent": "anomaly",
+    "total_s": 2.04,
+    "modele_s": 2.04,
+    "appels_llm": 0,
+    "graphiques": 1
+  },
+  {
+    "fichier": "demo_transactions_anomalies_synthetique.csv",
+    "lignes": 1500,
+    "question": "Détecte les anomalies",
+    "passage": 2,
+    "intent": "anomaly",
+    "total_s": 1.11,
+    "modele_s": 1.11,
+    "appels_llm": 0,
+    "graphiques": 1
+  },
+  {
+    "fichier": "demo_clients_banque_synthetique.csv",
+    "lignes": 300,
+    "question": "Quels clients risquent de partir ?",
+    "passage": 1,
+    "intent": "churn",
+    "total_s": 0.16,
+    "modele_s": 0.16,
+    "appels_llm": 0,
+    "graphiques": 2
+  },
+  {
+    "fichier": "demo_clients_banque_synthetique.csv",
+    "lignes": 300,
+    "question": "Quels clients risquent de partir ?",
+    "passage": 2,
+    "intent": "churn",
+    "total_s": 0.2,
+    "modele_s": 0.2,
+    "appels_llm": 0,
+    "graphiques": 2
+  },
+  {
+    "fichier": "Bank-Customer-Churn-Prediction.csv",
+    "lignes": 10000,
+    "question": "Quels clients risquent de partir ?",
+    "passage": 1,
+    "intent": "churn",
+    "total_s": 3.01,
+    "modele_s": 3.01,
+    "appels_llm": 0,
+    "graphiques": 2
+  },
+  {
+    "fichier": "Bank-Customer-Churn-Prediction.csv",
+    "lignes": 10000,
+    "question": "Quels clients risquent de partir ?",
+    "passage": 2,
+    "intent": "churn",
+    "total_s": 2.8,
+    "modele_s": 2.8,
+    "appels_llm": 0,
+    "graphiques": 2
+  }
+]

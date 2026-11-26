@@ -113,6 +113,13 @@
       </a>
 
       <a
+        href="{{ url_for('mes_donnees_nettoyees') }}"
+        class="{{ 'active' if request.endpoint == 'mes_donnees_nettoyees' else '' }}"
+      >
+        <i class="fas fa-broom me-2"></i> Données nettoyées
+      </a>
+
+      <a
         href="{{ url_for('profil') }}"
         class="{{ 'active' if request.endpoint == 'profil' else '' }}"
       >

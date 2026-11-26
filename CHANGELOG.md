@@ -4,6 +4,68 @@ Branche Git : `dataia-v2` (un commit par phase).
 
 ---
 
+## Phase 5 — Modèles de Machine Learning selon le domaine
+
+### Packages installés (dépendances vérifiées avant, aucun package existant mis à jour)
+`prophet==1.5.0`, `lightgbm==4.7.0`, `statsmodels==0.15.0`, `xlsxwriter==3.3.4` (+ cmdstanpy, holidays, matplotlib, patsy, formulaic…). Prophet fonctionne sous Windows : le repli sur ARIMA n'a pas été nécessaire.
+
+### Réentraînement du modèle churn (`entrainer_churn.py`)
+- Données : `a_integrer/modele_banque/Bank-Customer-Churn-Prediction.csv` (10 000 clients, 20,4 % de départs). Le dossier `autres/` n'existait pas.
+- **Pipeline** = OneHotEncoder(country, gender) + DecisionTreeClassifier. `max_depth=5` et `class_weight="balanced"` choisis par validation croisée stratifiée (5 plis, 20 combinaisons).
+- Test (2 000 clients) : **rappel 76,7 %**, précision 46,2 %, **F1 0,576**, **AUC 0,840**, accuracy 77,1 % (modèle naïf : 79,65 %). Matrice de confusion : VN 1 229, FP 364, FN 95, VP 312.
+- Fichiers produits dans `a_integrer/modele_banque/` : `modele_churn_pipeline.joblib`, `modele_churn_pipeline_metadonnees.json`, `churn_donnees_nettoyees.csv` / `.xlsx` / `_rapport.txt`. Copie des métriques : `mesures/phase5_churn_metriques.json`.
+- `train_churn.py` (version initiale) est conservé tel quel, comme base.
+
+### Fichiers ajoutés
+| Fichier | Rôle |
+|---|---|
+| `entrainer_churn.py` | Réentraînement du churn (Pipeline, validation croisée, métriques, sauvegardes). |
+| `services/ml/nettoyage.py` | Nettoyage traçable (`RapportNettoyage`) et export CSV + Excel + rapport. |
+| `services/ml/forecast.py` | Prévision : colonnes, nettoyage, exclusion des valeurs aberrantes, agrégation, périodes incomplètes, split temporel, Prophet vs LightGBM vs référence naïve, MAE / RMSE / MAPE / sMAPE, sélection, intervalle de confiance, figure. |
+| `services/ml/anomalies.py` | Isolation Forest : colonnes transactionnelles + écart de cohérence, seuil robuste, explication par ligne, liste « à surveiller », scatter, évaluation d'une transaction (simulateur). |
+| `services/ml/churn_banque.py` | Chargement unique du pipeline, correspondance des colonnes (alias), colonnes manquantes, prédiction fichier / client, formulaire généré depuis les features, figures. |
+| `services/ml/executeur.py` | Exécution dans le chat : export des données nettoyées, ligne `modeles_ml`, réponse en 3 langues avec tableaux, figures et liens de téléchargement. |
+| `templates/mes_donnees.html` | Page « Mes données nettoyées ». |
+| `donnees_demo/` | `generer_donnees_demo.py` + 3 jeux **synthétiques** (ventes, transactions avec 10 anomalies, clients banque) + corrigé des anomalies + README. |
+| `tests/test_ml.py` | **15 tests** (churn, prévision, anomalies, registre, routage, intégration base + téléchargement). |
+| `tests/benchmark_ml.py`, `mesures/phase5_ml.json`, `mesures/phase5_churn_metriques.json` | Mesures. |
+| `tests/integration_phase1.py`, `tests/integration_phase2.py`, `tests/tout_lancer.py` | Tests des Phases 1 et 2 (jusqu'ici hors dépôt) + lanceur de **tous** les tests. |
+
+### Fichiers modifiés
+- **`services/ml/registry.py`** : chaque modèle référence sa fonction d'exécution et de simulation (`"module:fonction"`, import à la demande).
+- **`services/assistant.py`** : `forecast`, `anomaly` et `churn` exécutent le modèle (si le domaine le permet) ; `Reponse` porte plusieurs graphiques (`resultats_graphiques`), leur `source` et `id_modele`.
+- **`app.py`** :
+  - `/ask_ia` transmet l'utilisateur et le fichier, enregistre tous les graphiques (source `ml` pour les modèles) et renvoie `graphiques` et `id_modele` ;
+  - nouvelles routes **`/mes_donnees_nettoyees`** et **`/telecharger/nettoyees/<id>/<csv|xlsx|rapport>`** (propriétaire ou admin, liste fermée, dossier contrôlé).
+- **`templates/chat.html`** : affichage de plusieurs graphiques par réponse. **`templates/base.html`** : lien « Données nettoyées ».
+- **`config.py`, `.env`** : `EXPORT_FOLDER`, `CHURN_MODEL_PATH`, `CHURN_DATA_PATH`, `PREVISION_MIN_PERIODES`, `PREVISION_HORIZON_DEFAUT`, `PREVISION_EXCLURE_ABERRANTS` ; les chemins sont normalisés.
+- **`requirements.txt`, `requirements-lock.txt`**.
+
+### Problèmes trouvés et corrigés pendant la phase
+| Problème | Mesure avant | Correction | Après |
+|---|---|---|---|
+| Une vente de 106 549 fausse la série mensuelle | MAPE LightGBM 24,5 % (pire que la référence naïve) | Exclusion des valeurs négatives et > Q3 + 5 × IQR, documentée | **9,7 %** |
+| Dernière semaine incomplète (3 jours) | Faux creux dans le test | Retrait des périodes incomplètes | — |
+| Agrégation hebdomadaire sur des données aléatoires | MAPE 64 % | Fréquence la plus grossière qui donne ≥ 12 périodes | 13 % (mensuel) |
+| 5 dates mensuelles → 17 « semaines » à 0 | Prévision fabriquée sur des zéros | Jamais plus fin que la granularité réelle | « historique insuffisant » |
+| Isolation Forest sur toutes les colonnes | Anomalies aux rangs 290 et 360 | Colonnes transactionnelles + écart de cohérence + seuil robuste | 7/8 détectées, 0 faux positif |
+| `contamination="auto"` | 573 lignes signalées | Seuil Q3 + 3 × IQR des scores | 7 lignes |
+| Remise ajoutée comme colonne | 0 anomalie détectée | Remise utilisée seulement dans la cohérence | 7/8 |
+| Simulateur d'anomalies sans remise | KeyError | Remise à 0 par défaut | — |
+
+### Mesures (`mesures/phase5_ml.json`, parcours chat complet, 0 appel au LLM)
+| Modèle | Fichier | Temps |
+|---|---|---|
+| Prévision | ventes_demo (1 793 lignes) | 4,6 s au 1er appel (démarrage de cmdstan), puis 0,5 s |
+| Prévision | demo_ventes (5 707 lignes) | 1,4 à 1,8 s |
+| Anomalies | ventes_demo / demo_transactions | 2,5 à 3 s / 1,1 à 2 s |
+| Churn | 300 clients / 10 000 clients | 0,2 s / 2,8 à 3 s |
+
+### Tests Phase 5
+`tests/tout_lancer.py` : Phase 1 21/21, Phase 2 33/33, Phase 3 (16 tests) OK, Phase 4 (17 tests) OK, **Phase 5 (15 tests) OK**.
+
+---
+
 ## Phase 4 — Graphiques à la demande (tous types, calculés par pandas)
 
 ### Base de données (migration `002`)

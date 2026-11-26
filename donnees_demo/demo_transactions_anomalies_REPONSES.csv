@@ -1,0 +1,11 @@
+﻿id_transaction,anomalie_injectee
+T00101,quantité énorme (150)
+T00251,quantité énorme (95)
+T00401,quantité énorme (80)
+T00521,montant négatif
+T00691,montant négatif
+T00831,montant négatif
+T00976,"prix absurde (0,05)"
+T01111,prix absurde (250 000)
+T01241,montant incohérent avec quantité × prix
+T01381,montant incohérent avec quantité × prix

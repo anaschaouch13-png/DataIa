@@ -51,6 +51,16 @@
   36. [Graphiques de l'ancien format](#36-graphiques-de-lancien-format)
   37. [Tout à la demande, rien d'automatique à l'upload](#37-tout-à-la-demande-rien-dautomatique-à-lupload)
   38. [Temps de génération d'un graphique](#38-temps-de-génération-dun-graphique)
+- **Phase 5 — Modèles de Machine Learning selon le domaine**
+  39. [Registre des modèles par domaine](#39-registre-des-modèles-par-domaine)
+  40. [Prévision : Prophet vs LightGBM vs ARIMA](#40-prévision--prophet-vs-lightgbm-vs-arima)
+  41. [Split temporel](#41-split-temporel)
+  42. [MAPE, MAE, RMSE : exemple chiffré](#42-mape-mae-rmse--exemple-chiffré)
+  43. [Préparer une série pour la prévision](#43-préparer-une-série-pour-la-prévision)
+  44. [Isolation Forest vs K-Means, DBSCAN, Z-score](#44-isolation-forest-vs-k-means-dbscan-z-score)
+  45. [Arbre de décision pour le churn (et ses limites)](#45-arbre-de-décision-pour-le-churn-et-ses-limites)
+  46. [Nettoyage des données et exports téléchargeables](#46-nettoyage-des-données-et-exports-téléchargeables)
+  47. [Packages ML installés](#47-packages-ml-installés)
 
 ---
 
@@ -655,3 +665,200 @@ La Phase 7 affichera seulement un **aperçu** du fichier et des **questions sugg
 **Optimisations trouvées grâce aux mesures.**
 - « Barres groupées / empilées » passaient par le routeur LLM (15 s), car la règle ne reconnaissait que « en barres » : tous les mots de type ont été ajoutés aux règles. Résultat : 0,46 s.
 - « Courbe des ventes » appelait le LLM (9 s) pour trouver l'axe X, alors qu'avec une colonne de dates il est évident : règle ajoutée. Résultat : 0,35 s.
+
+---
+
+# Phase 5 — Modèles de Machine Learning selon le domaine
+
+## 39. Registre des modèles par domaine
+
+**Choix.** `services/ml/registry.py` est la **seule** source qui dit quel modèle est proposé à quel domaine :
+- **tous les domaines** : prévision du CA et détection d'anomalies ;
+- **Banque** : en plus, le churn.
+
+Chaque entrée indique, sous forme de texte `"module:fonction"`, la fonction qui exécute le modèle dans le chat et celle du simulateur. Elles sont importées **au moment de l'appel** : pas d'import circulaire, et un modèle lourd (Prophet) n'est chargé que s'il sert.
+
+**Ajouter un modèle** (ex. une recommandation pour l'e-commerce) = une entrée dans `MODELES`, son nom dans `MODELES_SPECIFIQUES["E-commerce"]`, la fonction elle-même, et la valeur dans l'ENUM `modeles_ml.type` (par une migration). Le routeur, l'assistant, le chat et le simulateur n'ont pas à changer.
+
+**Hors domaine** : un utilisateur E-commerce qui demande le churn reçoit une explication polie (modèle réservé à la Banque, modèles disponibles pour lui, possibilité de changer de domaine). Testé.
+
+> **Jury :** *« Pourquoi pas un `if domaine == 'Banque'` dans le code ? »*
+> **Réponse :** Ce test se répéterait dans le routeur, le chat et le simulateur ; à chaque nouveau modèle il faudrait modifier tous ces endroits. Avec le registre, la règle métier est écrite à un seul endroit : c'est le principe « ouvert à l'extension, fermé à la modification ».
+
+## 40. Prévision : Prophet vs LightGBM vs ARIMA
+
+**Choix.** Deux modèles candidats **entraînés à chaque demande**, et le meilleur (MAPE le plus faible sur le test) est retenu automatiquement, avec un tableau comparatif dans la réponse. Une **référence naïve** (« même valeur qu'il y a un an ») est affichée pour juger si un modèle apporte vraiment quelque chose.
+
+| Modèle | Principe | Forces | Faiblesses |
+|---|---|---|---|
+| **Prophet** (Meta) | Somme d'une tendance, de saisonnalités et de jours fériés | Fonctionne avec peu de réglages ; intervalle de confiance natif ; robuste aux trous | Moins bon si la série est très bruitée ou sans saisonnalité nette |
+| **LightGBM** | Arbres de décision boostés sur des features : retards (lag 1-2-3), moyenne mobile, mois, jour de semaine, indice de temps | Capte des relations non linéaires ; très rapide | Ne sait pas extrapoler une tendance seul ; demande des features ; intervalle de confiance approximatif (±1,96 × écart-type des erreurs du test) |
+| ARIMA / SARIMA (écarté) | Modèle statistique autorégressif | Référence académique, interprétable | Demande une série stationnaire et le choix des ordres (p, d, q)(P, D, Q) : sur 24 mois, ces réglages sont instables. Prophet fournit la même famille de résultats sans réglage manuel. statsmodels est installé et pourrait servir de 3ᵉ candidat. |
+
+**Résultats mesurés (les deux cas montrent l'intérêt de la sélection automatique) :**
+| Fichier | Prophet | LightGBM | Référence naïve | Retenu |
+|---|---|---|---|---|
+| `ventes_demo_dataia.xlsx` (24 mois, ventes irrégulières) | MAPE 17,9 % | **9,7 %** | 22,5 % | LightGBM |
+| `demo_ventes_synthetique.csv` (36 mois, saisonnalité nette) | **11,6 %** | 26,1 % | 13,7 % | Prophet |
+| `sales_data_1000_rows.xlsx` (23 mois, données aléatoires) | 21,1 % | **13,2 %** | 22,7 % | LightGBM |
+
+**Prophet sous Windows** : installé sans problème (prophet 1.5.0, cmdstan inclus), compatible avec pandas 3.0. Le premier entraînement prend ~4 s (démarrage de cmdstan), puis moins d'une seconde.
+
+> **Jury :** *« Pourquoi entraîner deux modèles au lieu d'un ? »*
+> **Réponse :** Aucun modèle n'est le meilleur partout : sur mes trois fichiers, Prophet gagne une fois et LightGBM deux fois. On les compare sur les mêmes périodes de test et on garde le meilleur. C'est rapide (moins de 5 s), et le tableau comparatif montre le choix à l'utilisateur.
+
+## 41. Split temporel
+
+**Choix.** Les **dernières périodes** servent de test (20 % de la série, entre 3 et 12 périodes) ; le modèle est entraîné sur les périodes précédentes. **Jamais de mélange aléatoire.**
+
+**Pourquoi.** Avec un split aléatoire, le modèle verrait par exemple mars et mai pour « prédire » avril : il utiliserait le futur pour prédire le passé, et le score serait trop optimiste. En réalité, on prédit toujours après la dernière date connue. Le test reproduit cette situation.
+
+**Prévision récursive pour LightGBM** : sur le test comme sur le futur, chaque valeur prévue sert de « retard » pour la suivante. On n'utilise jamais les vraies valeurs du test pour prédire le test.
+
+Après l'évaluation, le modèle retenu est **réentraîné sur toute la série** pour prévoir le futur (les dernières périodes sont les plus informatives).
+
+> **Jury :** *« Pourquoi pas une validation croisée classique (k-fold) ? »*
+> **Réponse :** Le k-fold mélange les périodes, ce qui fait apprendre le futur au modèle. Pour une série temporelle, on utilise un split chronologique (ou un « walk-forward »). Avec 24 mois, un seul découpage (19 / 5) reste lisible pour l'utilisateur.
+
+## 42. MAPE, MAE, RMSE : exemple chiffré
+
+Prenons deux mois réels **100 000** et **200 000**, prévus **110 000** et **180 000**.
+
+| Métrique | Calcul | Résultat | Lecture |
+|---|---|---|---|
+| **MAE** (erreur absolue moyenne) | (10 000 + 20 000) / 2 | **15 000** | « en moyenne, on se trompe de 15 000 dinars » |
+| **RMSE** (racine de l'erreur quadratique moyenne) | √((10 000² + 20 000²) / 2) | **15 811** | pénalise davantage les grosses erreurs (RMSE ≥ MAE) |
+| **MAPE** (erreur absolue moyenne en %) | (10 % + 10 %) / 2 | **10 %** | indépendante de l'échelle : « on se trompe de 10 % » → précision affichée 90 % |
+| sMAPE (MAPE symétrique) | moyenne de \|erreur\| / ((\|réel\| + \|prévu\|) / 2) | 10,0 % | utilisée quand des valeurs réelles sont proches de 0 (la MAPE exploserait : division par ~0) |
+
+Ce calcul est vérifié par un test automatique (`tests/test_ml.py`, `test_metriques`).
+
+**Pourquoi choisir le modèle sur la MAPE ?** Elle est compréhensible par un non-spécialiste (« 9,7 % d'erreur ») et comparable d'un fichier à l'autre. La MAE et la RMSE sont affichées aussi : elles donnent l'erreur dans l'unité de la donnée.
+
+> **Jury :** *« Que veut dire “Précision : 90,3 %” ? »*
+> **Réponse :** 100 % moins la MAPE mesurée sur les 5 derniers mois, que le modèle n'avait pas vus : en moyenne, la prévision mensuelle s'écarte de 9,7 % du chiffre d'affaires réel.
+
+## 43. Préparer une série pour la prévision
+
+Trois problèmes réels ont été trouvés en testant sur `ventes_demo_dataia.xlsx`, et chacun a été corrigé :
+
+1. **Valeurs aberrantes.** Une seule vente de 106 549 (anomalie volontaire) faisait passer avril 2025 de 166 916 à 273 465. Les valeurs **négatives** et **supérieures à Q3 + 5 × IQR** (seuil volontairement prudent : la règle classique des valeurs extrêmes est 1,5 × IQR) sont **exclues de l'apprentissage**, listées dans le rapport de nettoyage, et restent visibles avec la détection d'anomalies. Sur ce fichier, exactement 5 lignes sont exclues (les 3 énormes et les 2 négatives) ; la plus grande vente normale est 9 898 ; sur `sales_data`, aucune ligne n'est exclue. **Effet : MAPE de LightGBM 24,5 % → 9,7 %.** Réglable par `PREVISION_EXCLURE_ABERRANTS` dans `.env`.
+2. **Périodes incomplètes.** La dernière semaine (29/12 → 04/01) ne contenait que 3 jours de ventes : sa somme, artificiellement basse, faussait le test. Les périodes incomplètes aux deux extrémités sont retirées (et signalées).
+3. **Fréquence d'agrégation.** La fréquence choisie automatiquement est la **plus grossière qui donne au moins 12 périodes** (mois, sinon semaine, sinon jour), et **jamais plus fine que la granularité réelle** des données. Un CA mensuel est moins bruité : sur `sales_data`, MAPE 13 % par mois contre 64 % par semaine. Sans cette limite, 5 dates mensuelles auraient donné 17 « semaines » presque toutes à 0 (trouvé par le test « historique insuffisant »). L'utilisateur peut imposer la fréquence (« prévision hebdomadaire »).
+
+**Historique insuffisant** : en dessous de 12 périodes après agrégation, le système l'explique au lieu de produire une prévision sans valeur.
+
+## 44. Isolation Forest vs K-Means, DBSCAN, Z-score
+
+**Principe d'Isolation Forest.** On construit 300 arbres qui coupent les données **au hasard**. Une ligne anormale est **isolée en peu de coupes**, car elle est loin des autres ; une ligne normale en demande beaucoup. Le score d'anomalie mesure cette facilité d'isolement.
+
+| Méthode | Pourquoi écartée |
+|---|---|
+| **Z-score** (\|x − moyenne\| / écart-type > 3) | Une seule colonne à la fois ; la moyenne et l'écart-type sont eux-mêmes faussés par les anomalies (un prix de 99 999 gonfle l'écart-type) ; suppose une distribution normale, alors que les montants sont très asymétriques |
+| **K-Means** | Fait des groupes, pas de la détection : il faut choisir k, et une anomalie finit dans un groupe comme les autres |
+| **DBSCAN** | Repère les points isolés, mais demande deux réglages sensibles (eps, min_samples), coûte plus cher en calcul, et marche mal quand la densité varie |
+| **Isolation Forest** ✅ | Plusieurs colonnes à la fois, aucune hypothèse de distribution, peu de réglages, rapide (~1 s sur 1 800 lignes), score continu pour classer les lignes |
+
+**Réglages trouvés par l'expérience** (`ventes_demo_dataia.xlsx`, 8 anomalies volontaires ; détail dans le CHANGELOG) :
+| Configuration | Rangs des 8 anomalies parmi 1 793 lignes |
+|---|---|
+| Toutes les colonnes numériques | 1, 2, 4, 26, 51, 52, 290, 360 |
+| Toutes + logarithme | 2, 3, 7, 29, 46, 80, 137, 237 |
+| **Quantité, prix, montant + écart de cohérence** ✅ | **1, 2, 3, 4, 5, 6, 7, 19** |
+
+1. **Colonnes transactionnelles uniquement** : l'âge du client ou la satisfaction « diluent » la recherche, puisque chaque coupe porte sur une colonne tirée au hasard.
+2. **Écart de cohérence** = (montant − quantité × prix × (1 − remise)) / |quantité × prix|, borné à [−5 ; 5]. Il fait ressortir un CA négatif, un prix de 0,01 ou un montant qui ne correspond pas à quantité × prix. Il est calculé automatiquement quand les trois colonnes sont reconnues.
+3. **Seuil automatique** : score > Q3 + 3 × IQR des scores. Il n'y a pas de « pourcentage d'anomalies » à deviner (avec `contamination="auto"`, 573 lignes étaient signalées).
+4. **Explication de chaque anomalie** : colonnes les plus éloignées de la médiane (écart absolu médian, robuste) et incohérence éventuelle, par exemple « chiffre_affaires = −350,00 au lieu de 1 608,30 (quantite × prix_unitaire) ».
+
+**Résultat** : sur `ventes_demo_dataia.xlsx`, **7 anomalies sur 8 détectées, 0 faux positif**. La 8ᵉ (quantité 120 à 46,37 €, montant cohérent) est 19ᵉ et figure en tête de la liste **« à surveiller »**. Sur `demo_transactions_anomalies_synthetique.csv`, 6 sur 10 sont détectées (1 faux positif) et les 4 autres sont dans « à surveiller ». Sur `sales_data` (aléatoire), 1 ligne sur 1 000 est signalée.
+
+**Limite (à dire honnêtement) — l'effet de masquage.** Quand plusieurs anomalies se ressemblent (4 quantités énormes : 60, 75, 90, 120), elles forment un petit groupe et s'isolent moins vite. C'est pour cela que la liste « à surveiller » est affichée. Une piste d'amélioration : un contrôle univarié robuste par colonne, en complément.
+
+> **Jury :** *« Une anomalie, c'est forcément une erreur ? »*
+> **Réponse :** Non : c'est une ligne **inhabituelle**. Elle peut être une erreur de saisie (prix de 0,01) ou une vraie vente exceptionnelle. Le modèle signale, explique pourquoi, et l'humain décide. C'est aussi pour cela que la prévision exclut ces lignes de l'apprentissage sans les supprimer du fichier.
+
+## 45. Arbre de décision pour le churn (et ses limites)
+
+**Réentraînement** (`entrainer_churn.py`, à partir de `train_churn.py`).
+
+1. **Pipeline scikit-learn** : `ColumnTransformer` (OneHotEncoder sur `country` et `gender`, autres colonnes telles quelles), puis `DecisionTreeClassifier`.
+   - *Avant* : `pd.get_dummies` **hors** du modèle. Au moment de prédire, il fallait refaire exactement le même encodage à la main ; or un fichier contenant seulement des clients français ne produit pas la colonne `country_Germany`, ce qui donne une erreur ou un décalage silencieux des colonnes.
+   - *Maintenant* : l'encodage fait partie du modèle sauvegardé, il est appliqué à l'identique.
+   - `handle_unknown="ignore"` : un pays inconnu (« Italy ») ne fait pas planter le modèle ; c'est signalé dans la réponse.
+2. **Pas de normalisation** : un arbre compare des seuils (« âge > 42,5 ? »), l'échelle des colonnes ne change rien.
+3. **`customer_id` retiré** : un identifiant n'a pas de valeur prédictive, et un arbre pourrait apprendre des numéros par cœur.
+
+**Choix de `max_depth`** par validation croisée stratifiée (5 plis), **sur le jeu d'entraînement seulement** :
+| max_depth | F1 entraînement | F1 validation | Lecture |
+|---|---|---|---|
+| 2 | 0,51 | 0,51 | trop simple (sous-apprentissage) |
+| 4 (modèle d'origine) | 0,51 | 0,50 | |
+| **5, poids équilibrés** ✅ | **0,58** | **0,56** | meilleur compromis |
+| 8 | 0,65 | 0,55 | l'écart se creuse |
+| illimité | **1,00** | 0,50 | **sur-apprentissage** : l'arbre apprend le jeu d'entraînement par cœur |
+
+**`class_weight="balanced"`** : seuls 20,4 % des clients partent. Sans pondération, l'arbre favorise la classe majoritaire. Les poids équilibrés donnent autant d'importance aux départs, ce qui améliore le F1 en validation (0,562 contre 0,553).
+
+**Résultats sur le jeu de test** (2 000 clients jamais vus) :
+| Métrique | Valeur | Lecture |
+|---|---|---|
+| **Rappel** | **76,7 %** | 312 des 407 clients partis ont été détectés |
+| Précision | 46,2 % | Sur 676 alertes, 312 sont de vrais départs |
+| F1 | 0,576 | Moyenne harmonique précision / rappel |
+| ROC-AUC | 0,840 | Bonne capacité à classer les clients du plus au moins risqué |
+| Accuracy | 77,1 % | **Inférieure au modèle naïf « tout le monde reste » (79,65 %)** |
+| Matrice de confusion | VN 1 229, FP 364, FN 95, VP 312 | |
+
+**Pourquoi l'accuracy est trompeuse ici.** Le modèle naïf qui dit « tout le monde reste » obtient 79,65 % d'accuracy… et ne détecte **aucun** départ. Pour une banque, rater un client qui part (faux négatif) coûte plus cher qu'appeler un client qui serait resté (faux positif). On privilégie donc le **rappel** et le **F1**.
+
+**Variables les plus importantes** : âge (46,9 %), nombre de produits (34,6 %), membre actif (7,2 %), solde (6,6 %), pays (3,8 %).
+
+**Limites de l'arbre de décision (à dire au jury).**
+- Instable : de petites variations des données peuvent changer l'arbre. Une forêt aléatoire ou un gradient boosting seraient plus robustes et un peu plus précis (AUC souvent ~0,86), mais moins lisibles.
+- Probabilités grossières : un arbre de profondeur 5 n'a que 32 feuilles, donc 32 probabilités possibles au maximum.
+- Avec des poids équilibrés, les probabilités sont **décalées vers le haut** : sur l'échantillon de démo, 32 % de clients « à risque » pour un taux réel de 20 %. Il faut les lire comme un **classement** des clients à contacter en priorité, pas comme des probabilités calibrées.
+- Modèle entraîné sur un seul jeu public (10 000 clients européens) : à réentraîner sur les données de la banque cible avant tout usage réel.
+
+**Sauvegarde.**
+- `a_integrer/modele_banque/modele_churn_pipeline.joblib` : le pipeline complet.
+- `modele_churn_pipeline_metadonnees.json` : features, catégories, bornes, version de scikit-learn (1.8.0), paramètres, tableau de validation croisée, métriques, importances, date, empreinte SHA-256 des données.
+- Données nettoyées (CSV + Excel) et rapport de nettoyage.
+- Le modèle est chargé **une seule fois** (au premier usage, puis gardé en mémoire), sans réentraînement.
+
+> **Jury :** *« Pourquoi un arbre de décision et pas un réseau de neurones ? »*
+> **Réponse :** Sur 10 000 lignes tabulaires, les réseaux de neurones ne font pas mieux que les arbres, et l'arbre est **explicable** : on peut montrer à un conseiller pourquoi un client est à risque (âge, nombre de produits). C'était aussi le modèle fourni ; je l'ai amélioré (Pipeline, profondeur choisie par validation croisée) sans changer de famille.
+
+## 46. Nettoyage des données et exports téléchargeables
+
+**Choix.** Chaque modèle passe par `services/ml/nettoyage.py`, qui **enregistre chaque opération** :
+- lignes avant / après ;
+- doublons supprimés ;
+- valeurs manquantes et méthode de traitement (**médiane** pour les nombres, plus robuste que la moyenne face aux valeurs extrêmes ; **valeur la plus fréquente** pour les catégories ; **suppression** si la cible ou la date manque, car on n'invente pas une cible) ;
+- conversions de types ;
+- encodages ;
+- agrégation ;
+- exclusions.
+
+**Exports** (à chaque exécution) dans `exports/donnees_nettoyees/U<utilisateur>/<modele>_<date>` :
+- `.csv` (UTF-8 avec BOM, pour que les accents s'affichent correctement dans Excel) ;
+- `.xlsx` (feuille `donnees` + feuille `rapport_nettoyage`) ;
+- `_rapport.txt`.
+
+Le chemin est enregistré dans `modeles_ml.chemin_donnees_nettoyees`. Dans le chat, chaque résultat de modèle propose les liens **CSV · Excel · rapport de nettoyage**, et la page **« Mes données nettoyées »** liste toutes les exécutions.
+
+**Sécurité du téléchargement** (`/telecharger/nettoyees/<id>/<format>`) : l'exécution doit appartenir à l'utilisateur (l'admin voit tout), le format est pris dans une liste fermée, et le fichier doit se trouver dans le dossier des exports. Testé : un autre utilisateur reçoit 403, et `../../.env` donne 404.
+
+**Choix propres à chaque modèle (justifiés dans le rapport de nettoyage lui-même).**
+- *Anomalies* : **aucune ligne supprimée** (une transaction incomplète ou en double peut elle-même être l'anomalie) ; manquants remplacés par la médiane.
+- *Churn (prédiction)* : manquants remplacés par la **médiane de l'entraînement**, pas celle du fichier (le modèle doit voir les mêmes repères qu'à l'apprentissage).
+- *Prévision* : exclusion documentée des valeurs aberrantes (§43).
+
+> **Jury :** *« Comment savez-vous ce que le modèle a vraiment reçu ? »*
+> **Réponse :** Pour chaque exécution, le jeu de données exact passé au modèle est téléchargeable en CSV et Excel, avec le rapport de nettoyage (lignes avant / après, méthode utilisée pour chaque valeur manquante, conversions, exclusions). Tout est reproductible et vérifiable.
+
+## 47. Packages ML installés
+
+`prophet 1.5.0`, `lightgbm 4.7.0`, `statsmodels 0.15.0`, `xlsxwriter 3.3.4` (et leurs dépendances : cmdstanpy, holidays, matplotlib, patsy…). Les dépendances ont été vérifiées par `pip install --dry-run` avant l'installation : ce sont uniquement de **nouveaux** packages, et aucun package existant n'a été mis à jour.
+
+`xlsxwriter` écrit les fichiers Excel à plusieurs feuilles (données + rapport) ; openpyxl, déjà présent, continue de servir à la lecture.

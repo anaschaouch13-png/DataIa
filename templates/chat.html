@@ -166,9 +166,8 @@
               loadingMsg.innerHTML = marked.parse(data.answer.trim());
               // Phase 4 : figure Plotly construite par le serveur à partir des données pandas
               // (l'ancien format JSON écrit par le LLM dans le texte n'est plus utilisé)
-              if (data.graphique && data.graphique.figure) {
-                  afficherGraphique(loadingMsg, data.graphique.figure);
-              }
+              // Phase 5 : un modèle ML peut renvoyer plusieurs graphiques (ex. churn : répartition + importances)
+              (data.graphiques || []).forEach(g => { if (g.figure) afficherGraphique(loadingMsg, g.figure); });
               // Phase 3 : suggestions cliquables (ex. choix de la colonne quand « ventes » est ambigu)
               afficherSuggestions(loadingMsg, data.suggestions);
           } else {

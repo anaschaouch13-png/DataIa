@@ -44,12 +44,21 @@ class Reponse:
     suggestions: List[str] = field(default_factory=list)
     demande_precision: bool = False
     temps: dict = field(default_factory=dict)
-    graphique: Optional[dict] = None             # Phase 4 : {"figure", "spec", "tableau"} (calculé par pandas)
-    _resultat_graphique: object = field(default=None, repr=False)   # pour l'enregistrement (PNG + base)
+    # Phase 4-5 : graphiques à afficher et à enregistrer (ResultatGraphique de services/charts.py).
+    # Un graphique « chat » (1) ou plusieurs pour un modèle ML (ex. churn : répartition + importances).
+    resultats_graphiques: list = field(default_factory=list, repr=False)
+    source_graphiques: str = "chat"              # "chat" ou "ml" (colonne graphiques.source)
+    id_modele: Optional[int] = None              # ligne modeles_ml créée (Phase 5)
+
+    @property
+    def graphique(self) -> Optional[dict]:
+        """Premier graphique (compatibilité Phase 4)."""
+        rg = self.resultats_graphiques[0] if self.resultats_graphiques else None
+        return {"figure": rg.figure, "spec": rg.spec, "tableau": rg.tableau} if rg and rg.figure else None
 
     def en_dict(self) -> dict:
         d = asdict(self)
-        d.pop("_resultat_graphique", None)
+        d.pop("resultats_graphiques", None)
         return d
 
 
@@ -219,7 +228,8 @@ def _repondre_rag(df: pd.DataFrame, file_id: int, analyse: AnalyseLangue, intent
 # ---------------------------------------------------------------------------
 # Point d'entrée
 # ---------------------------------------------------------------------------
-def repondre(df: pd.DataFrame, file_id: int, question: str, analyse: AnalyseLangue, domaine: str) -> Reponse:
+def repondre(df: pd.DataFrame, file_id: int, question: str, analyse: AnalyseLangue, domaine: str,
+             id_utilisateur: Optional[int] = None, source: str = "") -> Reponse:
     debut_total = time.time()
     trace = demarrer_trace()
     temps: dict = {}
@@ -238,21 +248,28 @@ def repondre(df: pd.DataFrame, file_id: int, question: str, analyse: AnalyseLang
         temps.update({f"graphique_{k}": v for k, v in rg.temps.items()})
         reponse = Reponse(texte=rg.texte, intent=intent, suggestions=rg.suggestions,
                           demande_precision=rg.demande_precision,
-                          graphique={"figure": rg.figure, "spec": rg.spec, "tableau": rg.tableau} if rg.figure else None,
-                          _resultat_graphique=rg)
+                          resultats_graphiques=[rg] if rg.figure else [])
     elif intent == "text":
         reponse = _repondre_rag(df, file_id, analyse, intent, temps)
     elif intent == "export":
         reponse = Reponse(texte=_msg("export", langue), intent=intent)
-    else:   # forecast, anomaly, churn : selon le domaine de l'utilisateur
+    else:   # forecast, anomaly, churn : selon le domaine de l'utilisateur (services/ml/registry.py)
         nom = registry.nom_modele(intent, langue)
         if registry.est_disponible(intent, domaine):
-            texte = _msg("modele_bientot", langue, nom=nom, domaine=domaine)
+            # Phase 5 : exécution À LA DEMANDE (jamais à l'upload) + export des données nettoyées
+            debut = time.time()
+            rm = registry.lanceur(intent)(df, analyse.question_pour_llm, langue, id_utilisateur=id_utilisateur,
+                                          id_fichier=file_id if id_utilisateur else None, source=source)
+            temps["modele_ml_s"] = round(time.time() - debut, 2)
+            temps.update({f"ml_{k}": v for k, v in (rm.temps or {}).items()})
+            reponse = Reponse(texte=rm.texte, intent=intent, resultat=rm.resultat,
+                              demande_precision=rm.demande_precision, resultats_graphiques=rm.graphiques,
+                              source_graphiques="ml", id_modele=rm.id_modele)
         else:
             texte = _msg("modele_indisponible", langue, nom=nom, domaine=domaine,
                          domaines=", ".join(registry.domaines_du_modele(intent)),
                          dispo=", ".join(registry.nom_modele(m, langue) for m in registry.modeles_du_domaine(domaine)))
-        reponse = Reponse(texte=texte, intent=intent)
+            reponse = Reponse(texte=texte, intent=intent)
 
     reponse.source_routage = reponse.source_routage or routage.source
     if analyse.avertissement:
