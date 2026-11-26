@@ -67,6 +67,22 @@ if not errorlevel 1 (
   echo             Lancez : "%PYTHON%" migrate.py   ^(sauvegarde automatique avant migration^)
 )
 
+REM ---------- 5b. Frontend React (Phase 6) : compilé une fois dans frontend\dist ----------
+if not exist "frontend\dist\index.html" (
+  where npm >nul 2>nul
+  if errorlevel 1 (
+    echo [ATTENTION] Node.js/npm absent : l'interface React n'est pas compilee, les pages de secours restent sur /login.
+  ) else (
+    echo [INFO] Premiere utilisation : compilation de l'interface React...
+    pushd frontend
+    if not exist "node_modules" call npm install
+    call npm run build
+    popd
+  )
+) else (
+  echo [OK] Interface React compilee
+)
+
 REM ---------- 6. Ouverture du navigateur des que le serveur repond ----------
 REM (DATAIA_NO_BROWSER=1 desactive l'ouverture, utile pour les tests automatiques)
 if not defined DATAIA_NO_BROWSER start "" /min powershell -NoProfile -WindowStyle Hidden -Command "for($i=0;$i -lt 90;$i++){ $c=New-Object Net.Sockets.TcpClient; try{ $c.Connect('127.0.0.1',5000); Start-Process '%URL%'; break }catch{ Start-Sleep 1 }finally{ $c.Close() } }"

@@ -1,0 +1,79 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Phase 6 : thème CLAIR (fond blanc). La palette « slate » est inversée dans
+   tailwind.config.js : bg-slate-950 = blanc, text-slate-100 = presque noir. */
+@layer base {
+  :root {
+    color-scheme: light;
+  }
+
+  body {
+    @apply bg-white text-slate-100 font-sans selection:bg-cyan-500/20 selection:text-cyan-700;
+  }
+}
+
+/* Custom Scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(100, 116, 139, 0.25);
+  border-radius: 9999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(100, 116, 139, 0.45);
+}
+
+/* Helpers (version claire) */
+.glass {
+  background: rgba(255, 255, 255, 0.85);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid rgba(15, 23, 42, 0.08);
+}
+
+.glass-card {
+  background: #ffffff;
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  box-shadow: 0 4px 24px 0 rgba(15, 23, 42, 0.06);
+}
+
+.glow-cyan {
+  box-shadow: 0 0 25px -5px rgba(0, 168, 181, 0.25);
+}
+
+.gradient-brand {
+  background: linear-gradient(135deg, #00A8B5 0%, #0A84E0 100%);
+}
+
+.gradient-text {
+  background: linear-gradient(135deg, #0891b2 0%, #0a84e0 50%, #6366f1 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+/* Réponses Markdown de l'IA (tableaux pandas, listes, liens de téléchargement).
+   Le plugin @tailwindcss/typography n'étant pas installé, on stylise ici. */
+.markdown { font-size: 0.875rem; line-height: 1.6; color: #1e293b; }
+.markdown p { margin: 0.4rem 0; }
+.markdown strong { color: #0e7490; }
+.markdown code { background: #f1f5f9; border-radius: 4px; padding: 0 4px; font-size: 0.8rem; color: #0f172a; }
+.markdown ul, .markdown ol { margin: 0.4rem 0 0.4rem 1.2rem; }
+.markdown ul { list-style: disc; }
+.markdown ol { list-style: decimal; }
+.markdown table { border-collapse: collapse; width: 100%; margin: 0.6rem 0; font-size: 0.8rem; display: block; overflow-x: auto; }
+.markdown th { background: #f1f5f9; color: #0f172a; font-weight: 600; text-align: left; }
+.markdown th, .markdown td { border: 1px solid #e2e8f0; padding: 0.35rem 0.55rem; white-space: nowrap; }
+.markdown blockquote { border-left: 3px solid #06b6d4; background: #f8fafc; padding: 0.4rem 0.8rem; margin: 0.6rem 0; color: #475569; font-size: 0.8rem; }
+.markdown a { color: #0a84e0; text-decoration: underline; font-weight: 500; }
+.markdown details { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 0.4rem 0.7rem; margin: 0.6rem 0; font-size: 0.8rem; }
+.markdown summary { cursor: pointer; font-weight: 600; color: #334155; }

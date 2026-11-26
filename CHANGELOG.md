@@ -4,6 +4,62 @@ Branche Git : `dataia-v2` (un commit par phase).
 
 ---
 
+## Phase 6 — Nouveau frontend (React) et simulateur what-if
+
+### Architecture
+- Frontend React (fourni) **copié dans `DataIa/frontend/`** pour être versionné (l'original `DataIA_Loal/frontend` n'est pas modifié ; `node_modules` est relié par une jonction Windows).
+- Compilé par Vite dans `frontend/dist` et **servi par Flask sous `/app/`**. `/` redirige vers `/app/` (`UI_PRINCIPALE=react`). Les pages Jinja restent en secours (`/accueil`, `/login`, `/dashboard`…).
+- Le frontend dialogue uniquement par l'**API JSON** `/api/*` (`api.py`).
+
+### Fichiers ajoutés
+| Fichier | Rôle |
+|---|---|
+| `api.py` | Blueprints `api` (`/api/*` : authentification, profil, fichiers, upload, historique, simulateur, simulations, données nettoyées, admin) et `spa` (`/app/...`). Protection CSRF (JSON obligatoire), 401 / 403 en JSON. |
+| `services/auth.py` | `User` (+ `en_dict`, sans le mot de passe), `admin_required` (réponse JSON pour l'API), `est_requete_api`. |
+| `services/fichiers.py` | `chemin_absolu`, `chemin_relatif`, `enregistrer_upload`, `fichier_de_utilisateur`, `supprimer_fichier` (partagés Jinja / API). |
+| `services/ml/simulateur.py` | Formulaires générés (prévision, anomalies, churn depuis les features du modèle), simulations, cache des modèles d'anomalies, enregistrement dans `simulations`. |
+| `frontend/src/components/simulator/SimulatorPanel.tsx` | Panneau what-if (modèles du domaine, formulaires dynamiques, résultats). |
+| `frontend/src/components/chat/PlotlyChart.tsx` | Affichage des figures Plotly du serveur (remplace Recharts / `ChartRenderer`). |
+| `frontend/src/components/dashboard/FilePreview.tsx` | Aperçu d'un fichier + questions suggérées (alimenté en Phase 7). |
+| `frontend/src/pages/ProfilePage.tsx`, `CleanedDataPage.tsx` | Profil (nom, domaine, modèles disponibles) ; « Mes données nettoyées ». |
+| `tests/test_frontend_api.py` | **7 tests** (authentification, CSRF, profil, upload, IDOR, simulateur par domaine et table `simulations`, admin, SPA et secours Jinja). |
+
+### Fichiers modifiés
+- **`app.py`** :
+  - Blueprints enregistrés ;
+  - cookie de session HttpOnly + **SameSite=Lax** ;
+  - `unauthorized_handler` (401 JSON pour l'API) ;
+  - `/` → `/app/`, nouvelle route `/accueil` (accueil Jinja) ;
+  - upload / suppression via `services/fichiers.py` ;
+  - `User` et `admin_required` déplacés dans `services/auth.py` ;
+  - pas de `no-store` sur les fichiers statiques.
+- **`config.py`** : `FRONTEND_DIST`, `UI_PRINCIPALE`.
+- **Frontend** :
+  - `tailwind.config.js` (palette `slate` inversée → **fond blanc**), `index.css` (thème clair + styles Markdown), `index.html` (plotly.js local) ;
+  - `vite.config.ts` (`base: '/app/'`, proxy de développement) ;
+  - `App.tsx` (`basename="/app"`, routes `/profil` et `/donnees`, Toaster clair) ;
+  - `types/index.ts`, `lib/api.ts` (réécrit sur `/api/*`, déconnexion POST, upload JSON, simulateur, export PDF par fichier) ;
+  - `useAuth.tsx` (domaine à l'inscription) ;
+  - `ChatPage.tsx` (réécrit : panneau simulateur repliable, figures, suggestions, aperçu, ancien format → « Régénérer ») ;
+  - `ChatBubble.tsx` (Markdown, figures, suggestions, détails du nettoyage) ;
+  - `SimulatorPage.tsx` (choix du fichier + panneau) ;
+  - `SignupPage.tsx` (liste des domaines) ;
+  - `Sidebar.tsx` (liens Données nettoyées et Profil, badge du domaine) ;
+  - `Navbar.tsx` (bascule sombre retirée) ;
+  - `AdminPage.tsx` (colonne Domaine modifiable) ;
+  - `FileUploadZone.tsx` (formats PDF / images, ouverture du chat après l'upload) ;
+  - `DashboardPage.tsx` ;
+  - 16 titres `text-white` → `text-slate-50`.
+- **Templates Jinja** (`base.html`, `landing.html`, `admin_dashboard.html`) : fond blanc.
+- **`demarrer.bat`** : compile le frontend s'il ne l'est pas (`npm install` + `npm run build`).
+
+### Vérifications
+- `tsc --noEmit` sans erreur ; build Vite 6,6 s ; bundle **528 Ko** (950 Ko avant : Recharts retiré).
+- Captures d'écran dans Chrome headless, connecté, à 1 440 px et 760 px (chat, tableau de bord, simulateur, profil, données nettoyées) : fond blanc, panneau simulateur à droite sur grand écran et replié sur mobile.
+- Tests (`tests/tout_lancer.py`) : Phase 1 21/21, Phase 2 33/33, Phases 3, 4 et 5 OK, **Phase 6 : 7/7**.
+
+---
+
 ## Phase 5 — Modèles de Machine Learning selon le domaine
 
 ### Packages installés (dépendances vérifiées avant, aucun package existant mis à jour)

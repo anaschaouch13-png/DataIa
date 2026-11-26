@@ -61,6 +61,13 @@
   45. [Arbre de décision pour le churn (et ses limites)](#45-arbre-de-décision-pour-le-churn-et-ses-limites)
   46. [Nettoyage des données et exports téléchargeables](#46-nettoyage-des-données-et-exports-téléchargeables)
   47. [Packages ML installés](#47-packages-ml-installés)
+- **Phase 6 — Nouveau frontend et simulateur what-if**
+  48. [Architecture : SPA React + API REST JSON](#48-architecture--spa-react--api-rest-json)
+  49. [Sécurité de l'API](#49-sécurité-de-lapi)
+  50. [Fond blanc : inversion de la palette](#50-fond-blanc--inversion-de-la-palette)
+  51. [Simulateur what-if](#51-simulateur-what-if)
+  52. [Graphiques dans React : Plotly plutôt que Recharts](#52-graphiques-dans-react--plotly-plutôt-que-recharts)
+  53. [Où vit le frontend ?](#53-où-vit-le-frontend-)
 
 ---
 
@@ -862,3 +869,80 @@ Le chemin est enregistré dans `modeles_ml.chemin_donnees_nettoyees`. Dans le ch
 `prophet 1.5.0`, `lightgbm 4.7.0`, `statsmodels 0.15.0`, `xlsxwriter 3.3.4` (et leurs dépendances : cmdstanpy, holidays, matplotlib, patsy…). Les dépendances ont été vérifiées par `pip install --dry-run` avant l'installation : ce sont uniquement de **nouveaux** packages, et aucun package existant n'a été mis à jour.
 
 `xlsxwriter` écrit les fichiers Excel à plusieurs feuilles (données + rapport) ; openpyxl, déjà présent, continue de servir à la lecture.
+
+---
+
+# Phase 6 — Nouveau frontend et simulateur what-if
+
+## 48. Architecture : SPA React + API REST JSON
+
+**Choix (option 1, validée).** Le frontend fourni (React 18 + Vite + TypeScript + Tailwind) est une **SPA** (*Single Page Application*) :
+- le navigateur charge une seule page HTML ;
+- React affiche les écrans ;
+- toutes les données passent par une **API JSON** (`api.py`, routes `/api/*`).
+
+Flask sert le build compilé sous **`/app/`** (`frontend/dist`) ; `/` redirige vers `/app/` (réglable avec `UI_PRINCIPALE` dans `.env`). Les pages **Jinja** restent accessibles en secours (`/login`, `/dashboard`, `/chat/<id>`, `/accueil`…), et tous leurs tests de non-régression passent.
+
+**Pourquoi.**
+- **Séparation** : l'interface et le serveur évoluent indépendamment. La même API pourrait servir une application mobile.
+- **Réutilisation** : le frontend fourni attendait déjà ces routes ; il a été adapté (fond blanc, simulateur, domaine, profil, données nettoyées, graphiques Plotly), pas réécrit.
+- **Pas de serveur Node en production** : `npm run build` produit des fichiers statiques servis par Flask ; une seule commande lance tout. `demarrer.bat` compile au premier lancement.
+
+**Alternative écartée — tout réécrire en Jinja (option 2).** Plus simple à déployer, mais cela jetait le travail fourni, et chaque interaction (chat, simulateur) aurait demandé du JavaScript écrit à la main dans les templates.
+
+**Routes ajoutées.** `/api/me`, `login`, `signup`, `logout` (POST), `domaines`, `profil` (GET/PUT), `dashboard`, `files`, `upload`, `files/<id>` (DELETE), `files/<id>/apercu`, `chat/<id>/history`, `simulateur/modeles`, `simulateur/<modele>`, `simulations`, `donnees_nettoyees`, `admin/data`, `admin/users/<id>/toggle`, `admin/users/<id>/domaine`, `admin/users/<id>` (DELETE). `/ask_ia` est commune aux deux interfaces.
+
+> **Jury :** *« C'est quoi une API REST ? »*
+> **Réponse :** Une interface où chaque ressource a une adresse (`/api/files/12`) et où le verbe HTTP dit l'action : GET pour lire, POST pour créer, PUT pour modifier, DELETE pour supprimer. Les réponses sont en JSON, que React affiche.
+
+## 49. Sécurité de l'API
+
+| Risque | Protection |
+|---|---|
+| Session volée par du JavaScript (XSS) | Cookie de session **HttpOnly** : le JavaScript ne peut pas le lire |
+| **CSRF** : un autre site fait agir le navigateur de l'utilisateur connecté | 1) Cookie **SameSite=Lax** : il n'est pas envoyé par les requêtes POST venant d'autres sites. 2) Les requêtes qui modifient des données doivent être en **JSON** (un formulaire HTML d'un autre site ne peut pas en envoyer ; testé : 415). 3) **Déconnexion en POST** : une simple image `<img src="/logout">` sur un autre site ne déconnecte plus. |
+| Accès aux données d'un autre (IDOR) | Chaque fichier ou exécution est filtré par `id_utilisateur` (testé : 404 pour un autre compte) |
+| Écrans protégés sans session | 401 en **JSON** (`unauthorized_handler`) : React affiche « session expirée » au lieu de recevoir une page HTML de connexion |
+| Fichiers du build (`/app/...`) | Le chemin doit rester dans `frontend/dist` (testé : `../../.env` donne 404) |
+| Admin | `admin_required` ; l'admin ne peut ni se bloquer ni se supprimer lui-même |
+
+Le décorateur `admin_required` et la classe `User` sont dans `services/auth.py`, partagés par les deux interfaces (plus de copie du contrôle).
+
+## 50. Fond blanc : inversion de la palette
+
+**Constat.** Le frontend fourni était entièrement sombre : environ 300 classes Tailwind de la palette `slate` (`bg-slate-950`, `text-slate-100`…).
+
+**Choix.** Dans `tailwind.config.js`, l'échelle `slate` est **inversée** : `slate-950` donne blanc et `slate-50` donne presque noir. Toutes les classes du design gardent leur **contraste relatif** sur fond clair, sans réécrire chaque composant. Les quelques `text-white` posés sur un fond neutre ont été remplacés (16 lignes) ; ceux posés sur un dégradé coloré (boutons, avatars) restent blancs. La bascule « mode sombre » a été retirée, et les pages Jinja ont aussi été passées en fond blanc.
+
+**Alternative.** Réécrire chaque classe à la main : plus « propre », mais environ 300 modifications et un fort risque d'oubli. Le choix fait tient en un seul fichier, et il est réversible.
+
+**Vérification visuelle.** Captures d'écran prises dans Chrome (headless) après connexion : chat, tableau de bord, simulateur, profil, données nettoyées, à 1 440 px et à 760 px de large (mobile).
+
+## 51. Simulateur what-if
+
+**Choix.** Un **panneau à droite du chat** (et une page dédiée) qui n'affiche **que les modèles du domaine** de l'utilisateur : la liste vient de `services/ml/registry.py`, comme dans le chat.
+
+| Modèle | Formulaire (généré par le serveur) | Résultat |
+|---|---|---|
+| Prévision CA | Colonne à prévoir (liste des colonnes numériques du fichier), horizon (curseur 1 à 12) | Valeur prévue pour la prochaine période, modèle retenu, précision (MAPE), mini-graphique |
+| Anomalies | Un champ par colonne utilisée par le modèle (prérempli avec la médiane) | « Normale » / « Anormale », score, seuil, position parmi les transactions du fichier, raison |
+| Churn (Banque) | **Généré depuis les features du modèle** (`meta["features_entree"]`) : listes déroulantes pour `country` / `gender` (catégories apprises), Oui/Non pour les colonnes 0/1, nombres pour le reste (bornes et médianes de l'entraînement) | « Reste » / « Risque de départ » et probabilité en % |
+
+**Pourquoi générer les formulaires côté serveur ?** Si le modèle est réentraîné avec d'autres variables, le formulaire suit **automatiquement** ; aucune liste de champs n'est écrite en dur dans React. Le frontend fourni avait un formulaire churn codé à la main, qui aurait été faux dès le premier changement.
+
+**Performance.** Le modèle d'anomalies entraîné sur un fichier est gardé en mémoire (cache de 8 fichiers, invalidé si le fichier change). Une simulation prend quelques millisecondes au lieu de réentraîner à chaque clic.
+
+**Traçabilité.** Chaque simulation est enregistrée dans la table **`simulations`** (entrées et résultat en JSON). Testé : 3 simulations donnent 3 lignes.
+
+**Responsive.** Le panneau est ouvert sur grand écran (≥ 1 280 px) ; sur petit écran il est replié, et un bouton flottant l'ouvre en tiroir.
+
+> **Jury :** *« À quoi sert un simulateur what-if ? »*
+> **Réponse :** À répondre à « que se passerait-il si… ? » sans fichier à préparer : « si ce client a 55 ans, 3 produits et n'est pas actif, risque-t-il de partir ? ». Le modèle est le même que celui du chat ; seule l'entrée change (une ligne saisie au lieu d'un fichier).
+
+## 52. Graphiques dans React : Plotly plutôt que Recharts
+
+Le frontend fourni dessinait avec **Recharts** les valeurs du JSON écrit par le LLM (l'ancien format). Désormais, le composant `PlotlyChart` affiche **la figure Plotly construite par le serveur** à partir de pandas (Phase 4) : un seul moteur pour le chat, l'historique, le simulateur et le PDF, donc des graphiques identiques partout. `plotly.js` est chargé depuis Flask (`/vendor/plotly.min.js`), sans package npm supplémentaire et sans Internet. Le bundle JavaScript passe de 950 Ko à 528 Ko.
+
+## 53. Où vit le frontend ?
+
+Le frontend fourni était dans `DataIA_Loal/frontend`, **hors du dépôt Git** : ses modifications n'auraient pas été versionnées. Ses sources ont été copiées dans **`DataIa/frontend/`**, qui est désormais la version de référence (commitée avec la Phase 6). L'original n'a pas été modifié. Les dépendances (`node_modules`) sont partagées par une jonction Windows ; pour une installation neuve : `npm install` puis `npm run build` dans `DataIa/frontend` (ou simplement `demarrer.bat`).
