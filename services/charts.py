@@ -297,6 +297,20 @@ def construire_spec(df: pd.DataFrame, question: str) -> SpecGraphique:
     return spec
 
 
+def _parts_negatives(df: pd.DataFrame, spec: SpecGraphique) -> bool:
+    """Vrai si une PART du camembert serait négative : on teste les valeurs agrégées par catégorie
+    (ce que le camembert dessine), pas les lignes brutes — quelques remboursements négatifs
+    n'empêchent pas un camembert dont tous les totaux sont positifs."""
+    if not spec.y or spec.agg == "count" or not spec.x:
+        return False
+    try:
+        filtres = [stats.Filtre(f["colonne"], f["operateur"], f["valeur"]) for f in spec.filtres]
+        donnees = stats.appliquer_filtres(df, filtres) if filtres else df
+        return bool((_agreger(donnees, spec, [spec.x]) < 0).any())
+    except Exception:                       # en cas de doute, prudence : pas de camembert
+        return bool((stats.en_numerique(df[spec.y]) < 0).any())
+
+
 def _type_auto(df: pd.DataFrame, spec: SpecGraphique, numeriques: List[str], dates: List[str]):
     """Choix automatique selon les règles du cahier des charges. Retourne (type, raison, params)."""
     if len(spec.colonnes_numeriques) >= 3:
@@ -311,7 +325,7 @@ def _type_auto(df: pd.DataFrame, spec: SpecGraphique, numeriques: List[str], dat
         n = int(df[spec.x].nunique())
         if spec.color:
             return "bar_groupe", "auto_bar_groupe", {"x": spec.x, "color": spec.color}
-        if n <= config.GRAPH_MAX_PIE and spec.agg in ("sum", "count"):
+        if n <= config.GRAPH_MAX_PIE and spec.agg in ("sum", "count") and not _parts_negatives(df, spec):
             return "pie", "auto_pie", {"x": spec.x, "n": n}
         return "bar", "auto_bar", {"x": spec.x, "n": n}
     if spec.x and spec.y and spec.x in numeriques:
@@ -340,7 +354,7 @@ def _choisir_type(df: pd.DataFrame, spec: SpecGraphique, numeriques: List[str], 
     elif demande in ("pie", "donut"):
         if not x_cat:
             probleme = "inc_camembert_sans_categorie"
-        elif spec.y and (stats.en_numerique(df[spec.y]) < 0).any():
+        elif _parts_negatives(df, spec):
             probleme = "inc_camembert_negatif"
     elif demande == "scatter":
         if not (spec.x in numeriques and spec.y in numeriques and spec.x != spec.y):

@@ -179,6 +179,26 @@ NOMS_PROPRES_ARABE = {
 }
 
 
+# Mots arabes courants -> termes français, ajoutés UNIQUEMENT à la requête de recherche du RAG
+# (Phase 9, mesuré : « ماذا يقول التقرير عن نهاية السنة؟ » ne retrouvait pas la phrase française
+# du PDF sur « novembre et décembre », et le LLM inventait un total).
+MOTS_RECHERCHE_ARABE = {
+    "تقرير": "rapport", "التقرير": "rapport", "نهاية السنة": "fin d'année novembre décembre",
+    "آخر السنة": "fin d'année novembre décembre", "مبيعات": "ventes", "المبيعات": "ventes",
+    "شهر": "mois", "الشهر": "mois", "أشهر": "mois", "سنة": "année", "منتج": "produit", "المنتجات": "produits",
+    "منطقة": "région", "المنطقة": "région", "فئة": "catégorie", "عملاء": "clients", "زبائن": "clients",
+    "نوفمبر": "novembre", "ديسمبر": "décembre", "يناير": "janvier", "جانفي": "janvier", "صيف": "été",
+    "رقم المعاملات": "chiffre d'affaires", "أرباح": "marge bénéfice", "توصيات": "recommandations",
+    "خلاصة": "conclusion", "استنتاج": "conclusion",
+}
+
+
+def termes_recherche(question: str) -> str:
+    """Termes français équivalents aux mots arabes de la question (pour la recherche RAG seulement)."""
+    termes = [fr for ar, fr in MOTS_RECHERCHE_ARABE.items() if ar in question]
+    return " ".join(dict.fromkeys(termes))
+
+
 def _noms_latins(question: str) -> str:
     trouves = [latin for arabe, latin in NOMS_PROPRES_ARABE.items() if re.search(rf"(?:^|\s|ل|ب|و|في)?{arabe}", question)]
     return f" ({', '.join(trouves)})" if trouves else ""

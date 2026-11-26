@@ -51,7 +51,11 @@ REGLES_INTENT = [
                r"\bplot\b", r"\bgraph\b", r"visualis", r"dessine", r"nuage de points", r"scatter", r"box ?plot",
                r"boite a moustache", r"heatmap", r"carte de chaleur", r"correlation", r"\bdonut", r"\banneau\b",
                r"\bbarres?\b", r"\bbar chart", r"\ben aire\b", r"\baire des\b", r"area chart", r"\bpie\b",
-               r"رسم", r"مخطط", r"بياني", r"منحنى", r"دائري", r"خريطة حرارية", r"ارتباط"]),
+               r"رسم", r"مخطط", r"بياني", r"منحنى", r"دائري", r"خريطة حرارية", r"ارتباط",
+               # « évolution des ventes par mois » : une évolution dans le temps se montre par une courbe
+               # (sans cette règle, le LLM l'envoyait parfois au RAG : réponse lente et sans calcul)
+               r"^(?!.*(\bque dit\b|what does|ماذا يقول|selon le|according to)).*(evolution|tendance|\btrend|تطور).*(par (jour|semaine|mois|trimestre|an|annee)|mensuel|hebdo|"
+               r"annuel|journalier|monthly|weekly|daily|yearly|over time|per (day|week|month|year)|شهر|اسبوع|يوم|سنة|سنوي)"]),
 ]
 
 

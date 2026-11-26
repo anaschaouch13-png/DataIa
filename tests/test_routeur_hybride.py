@@ -156,6 +156,22 @@ class TestCalculsDeterministes(unittest.TestCase):
         self.assertFalse(redaction.reformulation_valide("Le total des ventes est de 105,00.", autorises))
         self.assertFalse(redaction.reformulation_valide("مجموع المبيعات هو 106.20 دينار", autorises))
 
+    def test_evolution_dans_le_temps_est_un_graphique(self):
+        """Phase 9 (test de bout en bout) : « évolution des ventes par mois » partait au RAG (> 5 min)."""
+        from services.router import intent_par_regles
+        for q in ("évolution des ventes par mois", "what is the sales trend per month", "تطور المبيعات حسب الشهر",
+                  "tendance mensuelle du chiffre d'affaires"):
+            with self.subTest(question=q):
+                self.assertEqual(intent_par_regles(analyser_question(q).question_pour_llm), "graph")
+        # Une question de lecture reste une question de texte (RAG)
+        self.assertIsNone(intent_par_regles("Que dit le rapport sur l'évolution des ventes par mois ?"))
+
+    def test_termes_de_recherche_arabes(self):
+        from services.langue import termes_recherche
+        termes = termes_recherche("ماذا يقول التقرير عن نهاية السنة؟")
+        self.assertIn("rapport", termes)
+        self.assertIn("novembre", termes)
+
 
 @unittest.skipUnless(OLLAMA_OK, "Ollama arrêté : tests avec LLM ignorés")
 class TestCasReelProduitsMagasin(unittest.TestCase):

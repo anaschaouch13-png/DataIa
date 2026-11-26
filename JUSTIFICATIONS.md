@@ -78,6 +78,9 @@
   59. [fpdf2 pour le rapport](#59-fpdf2-pour-le-rapport)
   60. [L'arabe dans le PDF](#60-larabe-dans-le-pdf)
   61. [Contenu et construction du rapport](#61-contenu-et-construction-du-rapport)
+- **Phase 9 — Test de bout en bout**
+  62. [Pourquoi un test de bout en bout par HTTP](#62-pourquoi-un-test-de-bout-en-bout-par-http)
+  63. [Trois problèmes trouvés par le test de bout en bout](#63-trois-problèmes-trouvés-par-le-test-de-bout-en-bout)
 
 ---
 
@@ -1098,3 +1101,34 @@ Les lignes arabes sont alignées à droite. Les emojis des réponses du chat (�
 - Un **donut** refusé à cause de CA négatifs était remplacé par un **camembert**, qui a le même problème → remplacé par des barres. C'était un bug de la Phase 4, corrigé et testé.
 - Les `**` du Markdown restaient visibles dans les lignes arabes → retirés.
 - Un titre de graphique pouvait rester seul en bas de page → saut de page avant le titre.
+
+---
+
+# Phase 9 — Test de bout en bout
+
+## 62. Pourquoi un test de bout en bout par HTTP
+
+Les tests des phases 1 à 8 vérifient chaque brique, souvent avec le client de test de Flask ou en appelant directement les fonctions (`charts.generer`, `repondre`…). Le test de bout en bout (`tests/e2e_final.py`) fait autre chose : il parle au **vrai serveur** lancé (`python app.py`), par HTTP, avec une session `requests` comme un navigateur. Il rejoue le parcours de deux utilisatrices (Banque et E-commerce), de l'inscription à la déconnexion, et vérifie les tables à la fin.
+
+Les comptes `e2e.banque@dataia.local` et `e2e.ecommerce@dataia.local` sont **conservés**, pour pouvoir ouvrir leur historique dans l'interface. Seule la partie administrateur passe par le client de test (le mot de passe de l'admin n'est pas connu du script).
+
+> **Jury :** *« Vos tests unitaires passaient : à quoi sert ce test ? »*
+> **Réponse :** À trouver ce que les tests unitaires ne voient pas : l'enchaînement réel routeur → moteur. Il a trouvé trois problèmes (§63), dont un qui faisait attendre plus de 5 minutes.
+
+## 63. Trois problèmes trouvés par le test de bout en bout
+
+**1. « évolution des ventes par mois » partait au RAG (plus de 5 minutes).** Le test des graphiques appelait directement `charts.generer`, mais dans le chat, la question passe d'abord par le routeur. Aucune règle ne la reconnaissait (pas de mot « graphique » ni « courbe »), et le LLM l'a classée en question de **texte**. Le RAG a alors dû construire l'index FAISS des 1 793 lignes (≈ 57 lots d'embeddings, ≈ 5 min sur CPU), pour une réponse sans calcul.
+*Correction* : une règle « évolution / tendance / trend / تطور + période (par mois, mensuel, monthly, شهر…) » donne l'intent `graph`, donc une courbe calculée par pandas en moins d'une seconde. Une question de lecture (« Que dit le rapport sur l'évolution… ») reste une question de texte. Testé (`test_evolution_dans_le_temps_est_un_graphique`).
+
+**2. Camembert refusé à tort.** Le contrôle « valeurs négatives » portait sur les **lignes brutes** : sur `ventes_demo_dataia.xlsx`, 2 remboursements négatifs suffisaient à refuser « les ventes par région en camembert », alors que les **5 totaux par région**, c'est-à-dire ce que le camembert dessine, sont tous positifs. En plus, le choix automatique ne faisait pas ce contrôle, donc la règle n'était pas cohérente.
+*Correction* : `_parts_negatives` vérifie les valeurs **agrégées** par catégorie (après les filtres), à la fois pour un camembert demandé et pour le choix automatique. Testé dans les deux sens : un total négatif → barres ; des lignes négatives mais des totaux positifs → camembert.
+
+**3. Question de texte en arabe : un total inventé.** « ماذا يقول التقرير عن نهاية السنة؟ » sur le PDF français donnait « … إجمالي مبيعات بلغت 142,210,167 دينار », un nombre qui n'existe nulle part. Deux causes : la recherche vectorielle compare une question arabe à des phrases françaises et ne retrouvait pas la bonne phrase ; et le RAG n'avait pas de garde-fou sur les nombres (il n'existait que pour la reformulation des calculs).
+*Corrections* :
+- des termes français équivalents (rapport, fin d'année, novembre, décembre…) sont ajoutés à la **requête de recherche seulement** (`langue.termes_recherche`) ; la question envoyée au LLM ne change pas ;
+- **garde-fou** : chaque nombre de la réponse du RAG doit figurer dans les extraits ou dans la question, sinon un avertissement est ajouté, qui renvoie vers une question de calcul (pandas).
+
+*Après* : la réponse cite novembre et décembre, sans total inventé.
+
+> **Jury :** *« Pourquoi ne pas bloquer la réponse au lieu d'avertir ? »*
+> **Réponse :** Une réponse de texte peut contenir un nombre reformulé (un pourcentage arrondi, par exemple). Bloquer ferait perdre des réponses utiles ; avertir laisse l'utilisatrice juger, et lui indique le chemin fiable : une question de calcul, faite par pandas.
