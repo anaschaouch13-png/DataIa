@@ -113,6 +113,10 @@ GRAPH_MAX_CATEGORIES = _env_int("GRAPH_MAX_CATEGORIES", 20)  # barres : au-delà
 GRAPH_MAX_PIE = _env_int("GRAPH_MAX_PIE", 6)                 # règle auto : ≤ 6 catégories -> camembert
 GRAPH_MAX_POINTS = _env_int("GRAPH_MAX_POINTS", 5000)        # nuage de points : échantillon au-delà
 
+# ================== Frontend React (Phase 6) ==================
+FRONTEND_DIST = _chemin("FRONTEND_DIST", os.path.join("frontend", "dist"))   # build Vite servi sous /app/
+UI_PRINCIPALE = os.getenv("UI_PRINCIPALE", "react")    # "react" : / -> /app/ ; "jinja" : anciennes pages
+
 # ================== Machine Learning (Phase 5) ==================
 PREVISION_MIN_PERIODES = _env_int("PREVISION_MIN_PERIODES", 12)    # historique minimum après agrégation
 PREVISION_HORIZON_DEFAUT = _env_int("PREVISION_HORIZON_DEFAUT", 6)

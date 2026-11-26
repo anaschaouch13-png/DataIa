@@ -13,12 +13,12 @@ SUITES = [
     ("Phase 4 — graphiques", [sys.executable, "-m", "unittest", "tests.test_graphiques"]),
     ("Phase 5 — modèles ML", [sys.executable, "-m", "unittest", "tests.test_ml"]),
 ]
-for module in ("tests.test_frontend_api", "tests.test_parsers", "tests.test_pdf"):
-    try:
-        __import__(module)
-        SUITES.append((module, [sys.executable, "-m", "unittest", module]))
-    except ImportError:
-        pass
+import os
+for nom, module in (("Phase 6 — API du frontend + simulateur", "test_frontend_api"),
+                    ("Phase 7 — formats de fichiers", "test_parsers"),
+                    ("Phase 8 — export PDF", "test_pdf")):
+    if os.path.isfile(os.path.join(os.path.dirname(os.path.abspath(__file__)), module + ".py")):
+        SUITES.append((nom, [sys.executable, "-m", "unittest", "tests." + module]))
 
 bilan = []
 for nom, commande in SUITES:

@@ -20,7 +20,7 @@
     <style>
       body {
         font-family: "Inter", sans-serif;
-        background-color: #f8f9fa;
+        background-color: #ffffff; /* Phase 6 : fond blanc sur toute la plateforme */
       }
 
       .sidebar {
@@ -29,9 +29,10 @@
         position: fixed;
         top: 0;
         left: 0;
-        background-color: #1e272e;
+        background-color: #ffffff;
+        border-right: 1px solid #e2e8f0;
         padding-top: 20px;
-        color: white;
+        color: #1e293b;
         transition: 0.3s;
         /* نزيدو هوني flexbox باش نتحكمو في مكان الـ Logout */
         display: flex;
@@ -42,27 +43,27 @@
         padding: 15px 25px;
         text-decoration: none;
         font-size: 16px;
-        color: #d2dae2;
+        color: #475569;
         display: block;
         transition: 0.3s;
       }
 
       .sidebar a:hover {
-        background-color: #485460;
-        color: #00d2d3;
+        background-color: #f1f5f9;
+        color: #0891b2;
         padding-left: 35px;
       }
 
       .sidebar .active {
         border-left: 5px solid #00d2d3;
-        background-color: #2f3542;
-        color: white;
+        background-color: #ecfeff;
+        color: #0e7490;
       }
 
       /* هذي تخلي الـ Logout ينزل لأسفل الـ Sidebar */
       .logout-area {
         margin-top: auto;
-        border-top: 1px solid #485460;
+        border-top: 1px solid #e2e8f0;
         padding-bottom: 20px;
       }
 
@@ -76,8 +77,8 @@
         padding: 20px;
         font-weight: 600;
         font-size: 22px;
-        color: #00d2d3;
-        border-bottom: 1px solid #485460;
+        color: #0891b2;
+        border-bottom: 1px solid #e2e8f0;
         margin-bottom: 20px;
       }
     </style>
@@ -133,9 +134,9 @@
       {% endif %}
 
       <div class="logout-area">
-        <div class="px-4 pb-2 small" style="color: #d2dae2">
+        <div class="px-4 pb-2 small" style="color: #475569">
           <i class="fas fa-user me-1"></i> {{ current_user.nom }}<br />
-          <span class="badge mt-1" style="background-color: #2f3542; color: #00d2d3">
+          <span class="badge mt-1" style="background-color: #ecfeff; color: #0e7490">
             <i class="fas fa-briefcase me-1"></i>{{ current_user.domaine }}
           </span>
         </div>
