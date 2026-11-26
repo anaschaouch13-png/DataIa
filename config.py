@@ -41,7 +41,7 @@ def _env_float(nom: str, defaut: float) -> float:
 def _chemin(nom: str, defaut: str) -> str:
     """Retourne un chemin absolu ; un chemin relatif est résolu depuis BASE_DIR."""
     valeur = os.getenv(nom, defaut)
-    return valeur if os.path.isabs(valeur) else os.path.join(BASE_DIR, valeur)
+    return os.path.normpath(valeur if os.path.isabs(valeur) else os.path.join(BASE_DIR, valeur))
 
 
 # ================== Flask ==================
@@ -95,6 +95,11 @@ VECTOR_FOLDER = _chemin("VECTOR_FOLDER", os.path.join("uploads", "vector_indices
 REPORT_FOLDER = _chemin("REPORT_FOLDER", os.path.join("uploads", "rapports"))
 
 GRAPH_FOLDER = _chemin("GRAPH_FOLDER", os.path.join("uploads", "graphiques"))  # PNG + JSON Plotly
+# Données nettoyées passées aux modèles ML (CSV + Excel + rapport), une sous-dossier par utilisateur
+EXPORT_FOLDER = _chemin("EXPORT_FOLDER", os.path.join("exports", "donnees_nettoyees"))
+# Modèle churn (Pipeline scikit-learn) et ses métadonnées, entraînés par entrainer_churn.py
+CHURN_MODEL_PATH = _chemin("CHURN_MODEL_PATH", os.path.join("..", "a_integrer", "modele_banque", "modele_churn_pipeline.joblib"))
+CHURN_DATA_PATH = _chemin("CHURN_DATA_PATH", os.path.join("..", "a_integrer", "modele_banque", "Bank-Customer-Churn-Prediction.csv"))
 BACKUP_FOLDER = _chemin("BACKUP_FOLDER", "backups")          # sauvegardes mysqldump
 MIGRATIONS_FOLDER = _chemin("MIGRATIONS_FOLDER", "migrations")  # scripts SQL de migration
 # Chemin de mysqldump (WampServer ne l'ajoute pas au PATH)
@@ -108,7 +113,14 @@ GRAPH_MAX_CATEGORIES = _env_int("GRAPH_MAX_CATEGORIES", 20)  # barres : au-delà
 GRAPH_MAX_PIE = _env_int("GRAPH_MAX_PIE", 6)                 # règle auto : ≤ 6 catégories -> camembert
 GRAPH_MAX_POINTS = _env_int("GRAPH_MAX_POINTS", 5000)        # nuage de points : échantillon au-delà
 
-for _dossier in (UPLOAD_FOLDER, VECTOR_FOLDER, REPORT_FOLDER, BACKUP_FOLDER, GRAPH_FOLDER):
+# ================== Machine Learning (Phase 5) ==================
+PREVISION_MIN_PERIODES = _env_int("PREVISION_MIN_PERIODES", 12)    # historique minimum après agrégation
+PREVISION_HORIZON_DEFAUT = _env_int("PREVISION_HORIZON_DEFAUT", 6)
+# Exclure de l'apprentissage les valeurs négatives et aberrantes (> Q3 + 5×IQR) de la cible
+PREVISION_EXCLURE_ABERRANTS = os.getenv("PREVISION_EXCLURE_ABERRANTS", "1") == "1"
+ANOMALIE_CONTAMINATION = os.getenv("ANOMALIE_CONTAMINATION", "auto")  # part d'anomalies attendue ou « auto »
+
+for _dossier in (UPLOAD_FOLDER, VECTOR_FOLDER, REPORT_FOLDER, BACKUP_FOLDER, GRAPH_FOLDER, EXPORT_FOLDER):
     os.makedirs(_dossier, exist_ok=True)
 
 # ================== Multilingue ==================

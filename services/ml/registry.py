@@ -5,13 +5,20 @@ Une seule source de vérité : quels modèles sont proposés à quel domaine.
 Ajouter un modèle (ex. recommandation pour l'e-commerce) = ajouter une entrée
 dans MODELES et son nom dans MODELES_PAR_DOMAINE, sans toucher au reste du code.
 
-Phase 3 : seules les métadonnées sont utilisées (le routeur vérifie que le modèle
-demandé existe pour le domaine de l'utilisateur).
-Phase 5 : chaque entrée recevra la fonction qui exécute le modèle.
+Chaque entrée indique, sous forme de texte « module:fonction », la fonction qui exécute
+le modèle dans le chat et celle du simulateur what-if : elles sont importées au moment de
+l'appel (pas d'import circulaire, et un modèle lourd n'est chargé que s'il est utilisé).
+
+Exemple d'ajout pour l'e-commerce :
+    MODELES["reco"] = DescriptionModele("reco", "recommandation", {...},
+                                        "services.ml.executeur:lancer_reco", "services.ml.simulateur:simuler_reco")
+    MODELES_SPECIFIQUES["E-commerce"] = ["reco"]
+(+ la valeur « recommandation » dans l'ENUM modeles_ml.type, par une migration.)
 """
 
+import importlib
 from dataclasses import dataclass
-from typing import Dict, List
+from typing import Callable, Dict, List
 
 from services.domaines import DOMAINES
 
@@ -21,17 +28,35 @@ class DescriptionModele:
     cle: str                 # identifiant = intent du routeur (forecast, anomaly, churn)
     type_bdd: str            # valeur de modeles_ml.type / simulations.type_modele
     noms: Dict[str, str]     # nom affiché par langue
+    lanceur: str = ""        # « module:fonction » exécutée quand l'utilisateur le demande dans le chat
+    simulateur: str = ""     # « module:fonction » du simulateur what-if (Phase 6)
 
 
 MODELES: Dict[str, DescriptionModele] = {
     "forecast": DescriptionModele("forecast", "prevision", {
-        "fr": "Prévision du chiffre d'affaires", "en": "Revenue forecast", "ar": "توقع رقم المعاملات"}),
+        "fr": "Prévision du chiffre d'affaires", "en": "Revenue forecast", "ar": "توقع رقم المعاملات"},
+        "services.ml.executeur:lancer_prevision", "services.ml.simulateur:simuler_prevision"),
     "anomaly": DescriptionModele("anomaly", "anomalie", {
-        "fr": "Détection d'anomalies", "en": "Anomaly detection", "ar": "كشف الحالات الشاذة"}),
+        "fr": "Détection d'anomalies", "en": "Anomaly detection", "ar": "كشف الحالات الشاذة"},
+        "services.ml.executeur:lancer_anomalies", "services.ml.simulateur:simuler_anomalie"),
     "churn": DescriptionModele("churn", "churn", {
         "fr": "Prédiction du départ des clients (churn)", "en": "Customer churn prediction",
-        "ar": "توقع مغادرة العملاء"}),
+        "ar": "توقع مغادرة العملاء"},
+        "services.ml.executeur:lancer_churn", "services.ml.simulateur:simuler_churn"),
 }
+
+
+def _importer(reference: str) -> Callable:
+    module, fonction = reference.split(":")
+    return getattr(importlib.import_module(module), fonction)
+
+
+def lanceur(cle_modele: str) -> Callable:
+    return _importer(MODELES[cle_modele].lanceur)
+
+
+def simulateur(cle_modele: str) -> Callable:
+    return _importer(MODELES[cle_modele].simulateur)
 
 # Modèles communs à tous les domaines + modèles spécifiques
 MODELES_COMMUNS = ["forecast", "anomaly"]

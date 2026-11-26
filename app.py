@@ -276,6 +276,60 @@ def chat(file_id):
     return render_template('chat.html', fichier=fichier, historique=historique)
 
 
+def donnees_nettoyees_utilisateur(id_utilisateur: int) -> list:
+    """Exécutions de modèles ML de l'utilisateur, avec leurs fichiers de données nettoyées."""
+    conn = get_db_connection()
+    cursor = conn.cursor(dictionary=True)
+    cursor.execute("""SELECT m.id_modele, m.type, m.algorithme, m.metrique_mape, m.metrique_mae, m.metrique_accuracy,
+                             m.chemin_donnees_nettoyees, m.date_execution, f.nom_fichier
+                      FROM modeles_ml m LEFT JOIN fichiers f ON f.id_fichier = m.id_fichier
+                      WHERE m.id_utilisateur = %s ORDER BY m.date_execution DESC""", (id_utilisateur,))
+    lignes = cursor.fetchall()
+    cursor.close()
+    conn.close()
+    for l in lignes:
+        l['disponible'] = bool(l['chemin_donnees_nettoyees']) and os.path.isfile(chemin_absolu(l['chemin_donnees_nettoyees']))
+    return lignes
+
+
+@app.route('/mes_donnees_nettoyees')
+@login_required
+def mes_donnees_nettoyees():
+    """Phase 5.5 : liste de tous les jeux de données nettoyés passés aux modèles ML."""
+    return render_template('mes_donnees.html', executions=donnees_nettoyees_utilisateur(current_user.id))
+
+
+@app.route('/telecharger/nettoyees/<int:id_modele>/<format_fichier>')
+@login_required
+def telecharger_nettoyees(id_modele, format_fichier):
+    """
+    Téléchargement des données nettoyées d'une exécution ML (CSV, Excel ou rapport .txt).
+    Sécurité : la ligne doit appartenir à l'utilisateur (l'admin voit tout), le format est pris
+    dans une liste fermée et le fichier doit être dans le dossier des exports (pas de path traversal).
+    """
+    extensions = {"csv": (".csv", "text/csv"), "xlsx": (".xlsx", None), "rapport": ("_rapport.txt", "text/plain")}
+    if format_fichier not in extensions:
+        abort(404)
+    conn = get_db_connection()
+    cursor = conn.cursor(dictionary=True)
+    cursor.execute("SELECT id_utilisateur, type, chemin_donnees_nettoyees FROM modeles_ml WHERE id_modele = %s",
+                   (id_modele,))
+    ligne = cursor.fetchone()
+    cursor.close()
+    conn.close()
+    if not ligne or not ligne['chemin_donnees_nettoyees']:
+        abort(404)
+    if ligne['id_utilisateur'] != current_user.id and current_user.role != 'administrateur':
+        abort(403)
+    base = os.path.splitext(chemin_absolu(ligne['chemin_donnees_nettoyees']))[0]
+    suffixe, mimetype = extensions[format_fichier]
+    chemin = os.path.realpath(base + suffixe)
+    if os.path.commonpath([chemin, os.path.realpath(config.EXPORT_FOLDER)]) != os.path.realpath(config.EXPORT_FOLDER) \
+            or not os.path.isfile(chemin):
+        abort(404)
+    return send_file(chemin, as_attachment=True, download_name=os.path.basename(chemin), mimetype=mimetype)
+
+
 @app.route('/vendor/plotly.min.js')
 def plotly_js():
     """
@@ -324,7 +378,8 @@ def ask_ia():
 
         # 3. Routeur hybride : pandas (calculs) | RAG (texte) | graphique | ML selon le domaine
         #    (services/assistant.py)
-        reponse = repondre(df, int(file_id), question, analyse, current_user.domaine)
+        reponse = repondre(df, int(file_id), question, analyse, current_user.domaine,
+                           id_utilisateur=current_user.id, source=fichier['nom_fichier'])
 
         # 4. Historique : on enregistre la question telle que l'utilisateur l'a écrite
         cursor.execute("INSERT INTO questions (id_utilisateur, id_fichier, question_texte, reponse_texte, date_question) "
@@ -333,18 +388,19 @@ def ask_ia():
         conn.commit()
         id_question = cursor.lastrowid
 
-        # 5. Graphique : JSON enregistré tout de suite, PNG généré en arrière-plan (Phase 8 : PDF)
-        graphique = None
-        if reponse.graphique:
-            id_graphique = charts.enregistrer(reponse._resultat_graphique, current_user.id, int(file_id), id_question)
-            graphique = {"id_graphique": id_graphique, "figure": reponse.graphique["figure"],
-                         "type": reponse.graphique["spec"]["type"]}
+        # 5. Graphiques : JSON enregistré tout de suite, PNG généré en arrière-plan (Phase 8 : PDF)
+        graphiques = []
+        for rg in reponse.resultats_graphiques:
+            id_graphique = charts.enregistrer(rg, current_user.id, int(file_id), id_question,
+                                              source=reponse.source_graphiques)
+            graphiques.append({"id_graphique": id_graphique, "figure": rg.figure, "type": rg.spec["type"]})
         return jsonify({"status": "success", "answer": reponse.texte,
                         "langue": analyse.langue, "langue_reponse": langue,
                         "intent": reponse.intent, "routage": reponse.source_routage,
                         "resultat": reponse.resultat, "suggestions": reponse.suggestions,
                         "demande_precision": reponse.demande_precision, "temps": reponse.temps,
-                        "graphique": graphique, "id_question": id_question})
+                        "graphique": graphiques[0] if graphiques else None, "graphiques": graphiques,
+                        "id_modele": reponse.id_modele, "id_question": id_question})
 
     except OllamaIndisponibleError as e:
         # Ollama arrêté ou modèle absent : message clair, code 503, pas de crash

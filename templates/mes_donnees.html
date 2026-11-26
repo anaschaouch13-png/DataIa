@@ -1,0 +1,58 @@
+{% extends "base.html" %} {% block content %}
+<!-- Phase 5.5 : jeux de données nettoyés passés aux modèles ML (téléchargeables) -->
+<div class="container py-4">
+  <h3 class="mb-1" style="color: #1e272e; font-weight: 600">
+    <i class="fas fa-broom me-2"></i>Mes données nettoyées
+  </h3>
+  <p class="text-muted mb-4">
+    Pour chaque exécution d'un modèle (prévision, anomalies, churn), le jeu de données
+    <strong>exactement tel qu'il a été passé au modèle</strong> et le rapport de nettoyage.
+  </p>
+  {% if executions %}
+  <div class="card shadow-sm border-0" style="border-radius: 15px">
+    <div class="table-responsive">
+      <table class="table align-middle mb-0">
+        <thead class="table-light">
+          <tr>
+            <th>Date</th><th>Modèle</th><th>Algorithme</th><th>Fichier source</th><th>Métrique</th>
+            <th class="text-end">Téléchargements</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for e in executions %}
+          <tr>
+            <td><small>{{ e.date_execution.strftime('%d/%m/%Y %H:%M') if e.date_execution else '-' }}</small></td>
+            <td>
+              <span class="badge {{ 'bg-info' if e.type == 'prevision' else ('bg-danger' if e.type == 'anomalie' else 'bg-warning text-dark') }}">
+                {{ {'prevision': 'Prévision CA', 'anomalie': 'Anomalies', 'churn': 'Churn'}[e.type] }}
+              </span>
+            </td>
+            <td><small>{{ e.algorithme }}</small></td>
+            <td><small>{{ e.nom_fichier or '(fichier supprimé)' }}</small></td>
+            <td>
+              <small>
+                {% if e.metrique_mape is not none %}MAPE {{ '%.2f'|format(e.metrique_mape) }} %{% endif %}
+                {% if e.metrique_accuracy is not none %}Accuracy {{ '%.1f'|format(e.metrique_accuracy * 100) }} %{% endif %}
+              </small>
+            </td>
+            <td class="text-end">
+              {% if e.disponible %}
+              <a class="btn btn-sm btn-outline-success" href="{{ url_for('telecharger_nettoyees', id_modele=e.id_modele, format_fichier='csv') }}">CSV</a>
+              <a class="btn btn-sm btn-outline-success" href="{{ url_for('telecharger_nettoyees', id_modele=e.id_modele, format_fichier='xlsx') }}">Excel</a>
+              <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('telecharger_nettoyees', id_modele=e.id_modele, format_fichier='rapport') }}">Rapport</a>
+              {% else %}<small class="text-muted">fichier absent</small>{% endif %}
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+  {% else %}
+  <div class="alert alert-light border">
+    Aucune exécution de modèle pour l'instant. Dans le chat d'un fichier, demandez par exemple
+    « Prévois le chiffre d'affaires des 6 prochains mois » ou « Détecte les anomalies ».
+  </div>
+  {% endif %}
+</div>
+{% endblock %}
