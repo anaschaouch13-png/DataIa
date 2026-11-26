@@ -31,8 +31,14 @@ ollama==0.6.3
 httpx==0.28.1
 faiss-cpu==1.13.2
 
-# --- Graphiques / ML (déjà présents, utilisés aux phases 4-5) ---
+# --- Graphiques (Phase 4) ---
 plotly==6.5.2
+# kaleido 1.x : export PNG des figures Plotly en pilotant le Chrome INSTALLÉ sur la machine
+# (CHROME_PATH dans .env ; aucune copie de Chrome téléchargée). Installe aussi choreographer,
+# logistro, simplejson et platformdirs.
+kaleido==1.5.2
+
+# --- ML (déjà présents, utilisés en Phase 5) ---
 scikit-learn==1.8.0
 joblib==1.5.3
 

@@ -47,8 +47,11 @@ REGLES_INTENT = [
     ("forecast", [r"previs", r"\bprevoi", r"\bpredi(re|s|ction)\b.*(vente|chiffre|ca\b|mois|annee)",
                   r"\bforecast", r"\bpredict (the )?(sales|revenue)", r"mois prochain", r"next month",
                   r"توقع", r"تنبؤ", r"الشهر القادم"]),
-    ("graph", [r"graphi", r"\bgraphe", r"diagramme", r"courbe", r"histogramme", r"camembert", r"\bchart",
-               r"\bplot\b", r"\bgraph\b", r"visualis", r"dessine", r"رسم", r"مخطط", r"بياني"]),
+    ("graph", [r"graphi", r"\bgraphe", r"diagramme", r"courbe", r"histogram", r"camembert", r"\bchart",
+               r"\bplot\b", r"\bgraph\b", r"visualis", r"dessine", r"nuage de points", r"scatter", r"box ?plot",
+               r"boite a moustache", r"heatmap", r"carte de chaleur", r"correlation", r"\bdonut", r"\banneau\b",
+               r"\bbarres?\b", r"\bbar chart", r"\ben aire\b", r"\baire des\b", r"area chart", r"\bpie\b",
+               r"رسم", r"مخطط", r"بياني", r"منحنى", r"دائري", r"خريطة حرارية", r"ارتباط"]),
 ]
 
 

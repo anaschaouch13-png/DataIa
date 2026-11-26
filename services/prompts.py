@@ -108,18 +108,15 @@ RÈGLES :
 2. Les extraits ne sont qu'une partie du fichier : ne calcule JAMAIS de total, moyenne ou nombre sur l'ensemble du fichier.
 3. Si l'information n'est pas dans les données, dis-le simplement.
 4. Sois clair et concis ; utilise des listes à puces pour énumérer.
-{regle_graphique}
+5. Ne produis jamais de graphique ni de JSON : les graphiques sont générés par un autre module.
+
 LANGUE : {consigne_langue}"""
 
-# Phase 3 : le graphique passe encore par l'ancien format JSON (remplacé en Phase 4)
-REGLE_GRAPHIQUE = """5. Un graphique est demandé : ajoute ce JSON strict avec les données :
-   {"type_graph": "bar", "title": "Titre", "data": {"x": ["A", "B"], "y": [10, 20]}}
-   (types possibles : "bar", "line", "pie")."""
 
-
-def prompt_systeme_rag(langue_reponse: str, avec_graphique: bool = False) -> str:
-    return PROMPT_SYSTEME_RAG.format(regle_graphique=REGLE_GRAPHIQUE if avec_graphique else "",
-                                     consigne_langue=consigne_langue(langue_reponse))
+def prompt_systeme_rag(langue_reponse: str) -> str:
+    # Phase 4 : l'ancienne règle « produis un JSON {"type_graph": ...} » est supprimée ;
+    # le LLM inventait les valeurs du graphique (ex. 2 régions sur 5, valeurs fausses).
+    return PROMPT_SYSTEME_RAG.format(consigne_langue=consigne_langue(langue_reponse))
 
 
 def prompt_utilisateur_rag(df: pd.DataFrame, valeurs_categories: str, extraits: str,

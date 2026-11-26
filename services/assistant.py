@@ -22,7 +22,7 @@ from typing import List, Optional
 import pandas as pd
 
 from config import REFORMULATION_LLM
-from services import rag, redaction, stats
+from services import charts, rag, redaction, stats
 from services.langue import AnalyseLangue
 from services.llm import demarrer_trace, generer_reponse
 from services.ml import registry
@@ -44,9 +44,13 @@ class Reponse:
     suggestions: List[str] = field(default_factory=list)
     demande_precision: bool = False
     temps: dict = field(default_factory=dict)
+    graphique: Optional[dict] = None             # Phase 4 : {"figure", "spec", "tableau"} (calculé par pandas)
+    _resultat_graphique: object = field(default=None, repr=False)   # pour l'enregistrement (PNG + base)
 
     def en_dict(self) -> dict:
-        return asdict(self)
+        d = asdict(self)
+        d.pop("_resultat_graphique", None)
+        return d
 
 
 MESSAGES_INTENT = {
@@ -205,7 +209,7 @@ def _repondre_rag(df: pd.DataFrame, file_id: int, analyse: AnalyseLangue, intent
     extraits = rag.recherche_hybride(index, df, textes, analyse.question_pour_llm)
     temps["recherche_rag_s"] = round(time.time() - debut, 2)
     texte = generer_reponse(
-        prompt_systeme_rag(analyse.langue_reponse, avec_graphique=(intent == "graph")),
+        prompt_systeme_rag(analyse.langue_reponse),
         prompt_utilisateur_rag(df, resume_categories(df), "\n".join(f"- {e}" for e in extraits),
                                analyse.question_pour_llm, analyse.langue_reponse),
         etape="rag")
@@ -228,7 +232,15 @@ def repondre(df: pd.DataFrame, file_id: int, question: str, analyse: AnalyseLang
     intent = routage.intent
     if intent == "stat":
         reponse = _repondre_stat(df, routage, analyse, question, temps)
-    elif intent in ("text", "graph"):
+    elif intent == "graph":
+        # Phase 4 : moteur de graphiques (données calculées par pandas, jamais par le LLM)
+        rg = charts.generer(df, analyse.question_pour_llm, langue)
+        temps.update({f"graphique_{k}": v for k, v in rg.temps.items()})
+        reponse = Reponse(texte=rg.texte, intent=intent, suggestions=rg.suggestions,
+                          demande_precision=rg.demande_precision,
+                          graphique={"figure": rg.figure, "spec": rg.spec, "tableau": rg.tableau} if rg.figure else None,
+                          _resultat_graphique=rg)
+    elif intent == "text":
         reponse = _repondre_rag(df, file_id, analyse, intent, temps)
     elif intent == "export":
         reponse = Reponse(texte=_msg("export", langue), intent=intent)

@@ -15,7 +15,7 @@ from werkzeug.security import check_password_hash, generate_password_hash
 from werkzeug.utils import secure_filename
 
 import config
-from services import rag
+from services import charts, rag
 from services.db import get_db_connection
 from services.domaines import DOMAINE_PAR_DEFAUT, DOMAINES, domaine_valide
 from services.langue import analyser_question, message
@@ -257,14 +257,35 @@ def chat(file_id):
     cursor = conn.cursor(dictionary=True)
     cursor.execute("SELECT * FROM fichiers WHERE id_fichier = %s AND id_utilisateur = %s", (file_id, current_user.id))
     fichier = cursor.fetchone()
-    cursor.execute(
-        "SELECT question_texte, reponse_texte FROM questions WHERE id_fichier = %s ORDER BY date_question ASC", (file_id,))
+    if not fichier:
+        cursor.close()
+        conn.close()
+        return redirect(url_for('dashboard'))
+    cursor.execute("SELECT id_question, question_texte, reponse_texte FROM questions "
+                   "WHERE id_fichier = %s AND id_utilisateur = %s ORDER BY date_question ASC",
+                   (file_id, current_user.id))
     historique = cursor.fetchall()
     cursor.close()
     conn.close()
-    if not fichier:
-        return redirect(url_for('dashboard'))
+    # Phase 4 : graphiques de l'historique rechargés depuis leur JSON ; ancien format
+    # (JSON inventé par le LLM) retiré du texte et signalé, avec un bouton « Régénérer »
+    figures = charts.figures_des_questions([h['id_question'] for h in historique])
+    for h in historique:
+        h['reponse_texte'], h['ancien_graphique'] = charts.nettoyer_ancien_format(h['reponse_texte'] or '')
+        h['figures'] = figures.get(h['id_question'], [])
     return render_template('chat.html', fichier=fichier, historique=historique)
+
+
+@app.route('/vendor/plotly.min.js')
+def plotly_js():
+    """
+    plotly.js servi depuis le paquet Python installé (version 3.3.1, assortie à plotly 6.5.2).
+    Avant : CDN « plotly-latest » figé en 1.58.5 (2021), incompatible avec les figures
+    produites par plotly 6, et dépendant d'Internet.
+    """
+    import plotly
+    chemin = os.path.join(os.path.dirname(plotly.__file__), 'package_data', 'plotly.min.js')
+    return send_file(chemin, mimetype='application/javascript', max_age=7 * 24 * 3600)
 
 # ================== Route ask_ia (Version Finale Complète) ==================
 
@@ -310,11 +331,20 @@ def ask_ia():
                        "VALUES (%s, %s, %s, %s, NOW())",
                        (current_user.id, file_id, question, reponse.texte))
         conn.commit()
+        id_question = cursor.lastrowid
+
+        # 5. Graphique : JSON enregistré tout de suite, PNG généré en arrière-plan (Phase 8 : PDF)
+        graphique = None
+        if reponse.graphique:
+            id_graphique = charts.enregistrer(reponse._resultat_graphique, current_user.id, int(file_id), id_question)
+            graphique = {"id_graphique": id_graphique, "figure": reponse.graphique["figure"],
+                         "type": reponse.graphique["spec"]["type"]}
         return jsonify({"status": "success", "answer": reponse.texte,
                         "langue": analyse.langue, "langue_reponse": langue,
                         "intent": reponse.intent, "routage": reponse.source_routage,
                         "resultat": reponse.resultat, "suggestions": reponse.suggestions,
-                        "demande_precision": reponse.demande_precision, "temps": reponse.temps})
+                        "demande_precision": reponse.demande_precision, "temps": reponse.temps,
+                        "graphique": graphique, "id_question": id_question})
 
     except OllamaIndisponibleError as e:
         # Ollama arrêté ou modèle absent : message clair, code 503, pas de crash
@@ -668,4 +698,5 @@ if __name__ == '__main__':
                     etat["manquants"])
     else:
         prechauffer()   # charge les modèles en RAM en arrière-plan (1re question plus rapide)
+    charts.prechauffer_export()   # lance Chrome (kaleido) une fois : PNG en ~0,2 s au lieu de ~4 s
     app.run(debug=config.FLASK_DEBUG)

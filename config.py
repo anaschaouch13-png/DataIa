@@ -94,12 +94,21 @@ UPLOAD_FOLDER = _chemin("UPLOAD_FOLDER", "uploads")
 VECTOR_FOLDER = _chemin("VECTOR_FOLDER", os.path.join("uploads", "vector_indices"))
 REPORT_FOLDER = _chemin("REPORT_FOLDER", os.path.join("uploads", "rapports"))
 
+GRAPH_FOLDER = _chemin("GRAPH_FOLDER", os.path.join("uploads", "graphiques"))  # PNG + JSON Plotly
 BACKUP_FOLDER = _chemin("BACKUP_FOLDER", "backups")          # sauvegardes mysqldump
 MIGRATIONS_FOLDER = _chemin("MIGRATIONS_FOLDER", "migrations")  # scripts SQL de migration
 # Chemin de mysqldump (WampServer ne l'ajoute pas au PATH)
 MYSQLDUMP_PATH = os.getenv("MYSQLDUMP_PATH", "mysqldump")
 
-for _dossier in (UPLOAD_FOLDER, VECTOR_FOLDER, REPORT_FOLDER, BACKUP_FOLDER):
+# ================== Graphiques (Phase 4) ==================
+# Chrome déjà installé sur la machine, utilisé par kaleido pour exporter les PNG
+# (aucune copie de Chrome téléchargée). Vide = détection automatique.
+CHROME_PATH = os.getenv("CHROME_PATH", "")
+GRAPH_MAX_CATEGORIES = _env_int("GRAPH_MAX_CATEGORIES", 20)  # barres : au-delà -> top N + « Autres »
+GRAPH_MAX_PIE = _env_int("GRAPH_MAX_PIE", 6)                 # règle auto : ≤ 6 catégories -> camembert
+GRAPH_MAX_POINTS = _env_int("GRAPH_MAX_POINTS", 5000)        # nuage de points : échantillon au-delà
+
+for _dossier in (UPLOAD_FOLDER, VECTOR_FOLDER, REPORT_FOLDER, BACKUP_FOLDER, GRAPH_FOLDER):
     os.makedirs(_dossier, exist_ok=True)
 
 # ================== Multilingue ==================
