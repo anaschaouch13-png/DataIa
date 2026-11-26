@@ -369,8 +369,8 @@ def _choisir_type(df: pd.DataFrame, spec: SpecGraphique, numeriques: List[str], 
     spec.type, spec.raison, spec.raison_params = _type_auto(df, spec, numeriques, dates)
     # En remplacement d'une courbe / d'un histogramme, des barres (mêmes axes) sont plus proches
     # de la demande qu'un camembert ; le camembert ne remplace qu'un donut.
-    if spec.type == "pie" and demande not in ("pie", "donut"):
-        spec.type = "bar"
+    if spec.type == "pie" and (demande not in ("pie", "donut") or probleme == "inc_camembert_negatif"):
+        spec.type = "bar"     # (un donut refusé pour valeurs négatives ne devient pas un camembert : même problème)
     if spec.type == spec.type_demande:      # ne pas « remplacer » par le même type
         spec.type = "bar"
     if spec.type:

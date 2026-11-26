@@ -74,6 +74,10 @@
   56. [Pièges des tableaux de documents](#56-pièges-des-tableaux-de-documents)
   57. [Réponses attendues sur le PDF et l'image](#57-réponses-attendues-sur-le-pdf-et-limage)
   58. [Aperçu et questions suggérées (rien d'automatique)](#58-aperçu-et-questions-suggérées-rien-dautomatique)
+- **Phase 8 — Export PDF complet**
+  59. [fpdf2 pour le rapport](#59-fpdf2-pour-le-rapport)
+  60. [L'arabe dans le PDF](#60-larabe-dans-le-pdf)
+  61. [Contenu et construction du rapport](#61-contenu-et-construction-du-rapport)
 
 ---
 
@@ -1037,3 +1041,60 @@ Dans React, l'upload ouvre directement le chat du fichier avec cet aperçu. L'AP
 
 > **Jury :** *« Pourquoi ne pas afficher un tableau de bord automatique à l'upload ? »*
 > **Réponse :** Parce qu'on ne sait pas encore ce qui intéresse l'utilisateur ; on lui montre ce que contient le fichier et des questions pertinentes, et chaque calcul reste à sa demande. Cela évite aussi des calculs inutiles sur une machine de 8 Go.
+
+---
+
+# Phase 8 — Export PDF complet
+
+## 59. fpdf2 pour le rapport
+
+**Choix.** `fpdf2` (déjà utilisé par l'ancien export), dans `services/pdf_export.py`.
+
+**Pourquoi.**
+- Pur Python, déjà installé, léger.
+- **Sommaire automatique** avec numéros de page (`insert_toc_placeholder` + `start_section`).
+- **Tableaux** natifs ; images PNG ; pied de page « Page X / N ».
+- Polices TrueType (indispensable pour l'arabe).
+
+| Alternative | Pourquoi écartée |
+|---|---|
+| ReportLab (installé) | Plus puissant, mais API plus verbeuse ; aucun avantage décisif ici |
+| xhtml2pdf / WeasyPrint (HTML → PDF) | Gestion du texte arabe et des polices plus fragile ; WeasyPrint demande GTK sous Windows |
+| Imprimer la page web en PDF (Chrome) | Le rendu dépend de l'écran ; pas de sommaire ni de mise en page de rapport |
+
+**Ancien export.** Il ne contenait que les 10 derniers messages en texte, et il **supprimait l'arabe** (conversion en latin-1). Il est remplacé par le rapport complet, dans les deux interfaces : React (`POST /api/rapport/<id>/pdf`) et Jinja (`/export_pdf` avec `file_id`).
+
+## 60. L'arabe dans le PDF
+
+Le PDF ne « met pas en forme » le texte comme un navigateur. Trois éléments sont nécessaires :
+
+1. **Une police qui contient l'arabe** : Arial de Windows (`C:\Windows\Fonts\arial.ttf`, configurable par `PDF_POLICE` dans `.env`), qui contient les lettres arabes et leurs **formes de présentation** (U+FE70–U+FEFF). Vérifié par programme : Arial normal et gras les contiennent, **Arial italique non**. Le texte arabe n'est donc jamais écrit en italique (trouvé en testant : fpdf2 signalait 28 glyphes manquants).
+2. **`arabic-reshaper`** : en arabe, une lettre change de forme selon sa position (isolée, initiale, médiane, finale). Le reshaper remplace chaque lettre par la bonne forme liée.
+3. **`python-bidi`** (algorithme bidirectionnel Unicode) : le PDF écrit de gauche à droite ; bidi réordonne la ligne pour qu'elle **se lise de droite à gauche**, tout en gardant les nombres et les mots latins (« Total_Price ») dans le bon sens.
+
+Les lignes arabes sont alignées à droite. Les emojis des réponses du chat (🔢 ⚠️ ℹ️…), absents de la police, sont remplacés par du texte (« Attention : », « Info : »).
+
+**Vérification.** Les pages ont été rendues en image (pypdfium2) et relues visuellement : les lettres sont liées et le sens est correct, y compris dans les lignes mixtes arabe / français / chiffres. Le test automatique vérifie que le PDF contient des formes de présentation arabes.
+
+> **Jury :** *« Pourquoi l'arabe sortait-il en lettres séparées et à l'envers avant ? »*
+> **Réponse :** L'ancien export convertissait le texte en latin-1, ce qui supprimait l'arabe. Avec une police arabe seule, les lettres apparaîtraient isolées et de gauche à droite ; il faut le reshaper pour les formes liées et l'algorithme bidi pour l'ordre de lecture.
+
+## 61. Contenu et construction du rapport
+
+**Structure.**
+1. **Page de titre** : logo, titre, fichier, date, utilisateur, domaine, et une note qui rappelle que les chiffres viennent de pandas et des modèles, pas du LLM.
+2. **Sommaire** cliquable avec numéros de page.
+3. **Informations du fichier** : format, contenu (« PDF : 2 tableaux »), lignes × colonnes, colonnes et types, remarques du parser (ligne Total retirée, confiance de l'OCR…).
+4. **Questions et réponses** : toutes les questions du fichier. Les réponses Markdown sont converties : les tableaux pandas deviennent de **vrais tableaux PDF**, les lignes de provenance s'affichent en italique gris, et le détail du nettoyage est conservé.
+5. **Graphiques** : **tous** les graphiques du fichier (chat et modèles ML), avec leur titre, leur type et la raison du choix. Le PNG enregistré en Phase 4 est utilisé ; s'il manque (export en arrière-plan pas encore terminé), il est **régénéré** depuis le JSON de la figure.
+6. **Modèles ML** : métriques, tableau comparatif Prophet / LightGBM / référence naïve, colonnes et seuil des anomalies, métriques de test du churn, nom du fichier de données nettoyées.
+7. **Simulations what-if** liées au fichier (et celles du churn, qui n'ont pas de fichier) : entrées et résultat.
+
+**Enregistrement.** Le PDF est écrit dans `uploads/rapports/`, et une ligne est ajoutée dans `rapports` (dernière question, résumé, premier graphique et son type : colonnes `chemin_graphique` / `type_graphique` de la migration 001). Il est consultable par l'admin. Un utilisateur ne peut générer le rapport que de **ses** fichiers (testé : 404).
+
+**Mesures.** Rapport de test (4 questions, 3 graphiques, 1 prévision ML, 1 simulation) : **2,3 s**, 486 Ko. Rapport réel de l'utilisatrice (20 questions, 18 graphiques) : 16 pages, ~14 s, dont l'export des PNG manquants.
+
+**Problèmes trouvés en relisant le PDF rendu en image.**
+- Un **donut** refusé à cause de CA négatifs était remplacé par un **camembert**, qui a le même problème → remplacé par des barres. C'était un bug de la Phase 4, corrigé et testé.
+- Les `**` du Markdown restaient visibles dans les lignes arabes → retirés.
+- Un titre de graphique pouvait rester seul en bas de page → saut de page avant le titre.

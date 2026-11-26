@@ -113,6 +113,14 @@ GRAPH_MAX_CATEGORIES = _env_int("GRAPH_MAX_CATEGORIES", 20)  # barres : au-delà
 GRAPH_MAX_PIE = _env_int("GRAPH_MAX_PIE", 6)                 # règle auto : ≤ 6 catégories -> camembert
 GRAPH_MAX_POINTS = _env_int("GRAPH_MAX_POINTS", 5000)        # nuage de points : échantillon au-delà
 
+# ================== Export PDF (Phase 8) ==================
+# Police TrueType contenant l'alphabet latin ET arabe (Arial de Windows : lettres arabes et
+# formes liées U+FE70-U+FEFF). Sous Linux : DejaVuSans ou Amiri, par exemple.
+_POLICES = os.getenv("PDF_DOSSIER_POLICES", r"C:\Windows\Fonts")
+PDF_POLICE = os.getenv("PDF_POLICE", os.path.join(_POLICES, "arial.ttf"))
+PDF_POLICE_GRAS = os.getenv("PDF_POLICE_GRAS", os.path.join(_POLICES, "arialbd.ttf"))
+PDF_POLICE_ITALIQUE = os.getenv("PDF_POLICE_ITALIQUE", os.path.join(_POLICES, "ariali.ttf"))
+
 # ================== Frontend React (Phase 6) ==================
 FRONTEND_DIST = _chemin("FRONTEND_DIST", os.path.join("frontend", "dist"))   # build Vite servi sous /app/
 UI_PRINCIPALE = os.getenv("UI_PRINCIPALE", "react")    # "react" : / -> /app/ ; "jinja" : anciennes pages

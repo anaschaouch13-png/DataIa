@@ -234,8 +234,9 @@
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
-                    history: historyText,   // بعثنا history عوضاً عن content
-                    conseil: lastBotAnswer  // بعثنا الـ conseil باش يظهر في المربع الأزرق
+                    file_id: {{ fichier.id_fichier }},  // Phase 8 : rapport complet généré par le serveur
+                    history: historyText,
+                    conseil: lastBotAnswer
                 })
             });
 

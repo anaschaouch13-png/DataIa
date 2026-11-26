@@ -4,6 +4,38 @@ Branche Git : `dataia-v2` (un commit par phase).
 
 ---
 
+## Phase 8 — Export PDF complet (graphiques, ML, simulations, arabe)
+
+### Fichiers ajoutés
+| Fichier | Rôle |
+|---|---|
+| `services/pdf_export.py` | `RapportPDF` (fpdf2 : police Arial avec l'arabe, sommaire, tableaux, Markdown, pied de page) ; `texte_pdf` (arabic-reshaper + python-bidi, emojis retirés) ; `generer_rapport` (titre, sommaire, fichier, questions/réponses, graphiques PNG régénérés si besoin, modèles ML, simulations ; enregistrement dans `rapports`). |
+| `tests/test_pdf.py` | **4 tests** : mise en forme de l'arabe, téléchargement, **contenu vérifié avec pdfplumber** (sections, question, provenance pandas, arabe mis en forme, au moins 4 images), ligne `rapports`, IDOR. |
+| `mesures/phase8_pdf.json` | Temps de génération et taille. |
+
+### Fichiers modifiés
+- **`api.py`** : `POST /api/rapport/<id_fichier>/pdf` (propriétaire uniquement).
+- **`app.py`** : `/export_pdf` produit le rapport complet quand `file_id` est fourni (l'ancien format reste en secours).
+- **`templates/chat.html`** : envoie `file_id`.
+- **`config.py`** : `PDF_POLICE`, `PDF_POLICE_GRAS`, `PDF_POLICE_ITALIQUE` (Arial de Windows par défaut).
+- **`services/charts.py`** : correction — un donut refusé pour valeurs négatives devient des barres (et non un camembert) ; test ajouté dans `tests/test_graphiques.py`.
+- Le frontend React appelle déjà `/api/rapport/<id>/pdf` (Phase 6).
+
+### Problèmes trouvés et corrigés
+| Problème | Correction |
+|---|---|
+| Arial italique sans glyphes arabes (28 manquants) | Arabe jamais en italique |
+| `**` visibles dans les lignes arabes | Retirés (le Markdown de fpdf2 ne s'applique pas au texte arabe) |
+| Raison du graphique affichée en clé interne (`auto_pie`) | Phrases lisibles |
+| Titre de graphique seul en bas de page | Saut de page |
+| Donut refusé (négatifs) → camembert | → barres |
+| Test : PDF verrouillé par la réponse Flask, compte de test non supprimé | Réponse fermée ; nettoyage robuste (graphiques et exports du compte inclus) |
+
+### Mesures
+Rapport de test **2,3 s / 486 Ko** ; rapport réel (20 questions, 18 graphiques) : 16 pages en ~14 s.
+
+---
+
 ## Phase 7 — Support multi-formats (CSV, Excel, PDF, images)
 
 ### Packages (dépendances vérifiées ; aucun package existant modifié)
