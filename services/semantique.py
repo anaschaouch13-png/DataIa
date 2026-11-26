@@ -108,7 +108,11 @@ def colonnes_du_concept(df: pd.DataFrame, concept: str) -> List[str]:
     resultat = []
     for motif in CONCEPTS[concept]["colonnes"]:
         for c in df.columns:
-            if c not in resultat and re.search(motif, normaliser(c).replace(" ", "_")) and est_numerique(df, c):
+            nom = normaliser(c).replace(" ", "_")
+            # « Nombre de ventes » COMPTE des ventes : ce n'est pas un chiffre d'affaires (Phase 7, mesuré)
+            if concept == "ventes" and re.match(r"(nombre|nb|count|quantit|qte|qty)", nom):
+                continue
+            if c not in resultat and re.search(motif, nom) and est_numerique(df, c):
                 resultat.append(c)
     return resultat
 
@@ -205,6 +209,19 @@ def detecter_groupe(df: pd.DataFrame, question: str) -> Optional[str]:
     return None
 
 
+def mesure_par_defaut(df: pd.DataFrame, numeriques: List[str]) -> Optional[str]:
+    """Colonne à mesurer quand la question n'en nomme aucune (voir resoudre_mesure, étape 5)."""
+    sans_id = [c for c in numeriques
+               if not re.search(r"(^|_)(id|code|num|numero|no|ref)($|_)", normaliser(c).replace(" ", "_"))]
+    ventes = [c for c in colonnes_du_concept(df, "ventes") if c in sans_id]
+    if ventes:
+        return ventes[0]
+    totaux = [c for c in sans_id if normaliser(c).strip() in ("total", "totaux", "montant total", "total general")]
+    if totaux:
+        return totaux[0]
+    return sans_id[0] if len(sans_id) == 1 else None
+
+
 def resoudre_mesure(df: pd.DataFrame, question: str, colonne_llm: Optional[str],
                     multiplicateur_llm: Optional[str] = None) -> Resolution:
     """
@@ -252,6 +269,13 @@ def resoudre_mesure(df: pd.DataFrame, question: str, colonne_llm: Optional[str],
         mult = multiplicateur_llm if multiplicateur_llm in numeriques else None
         return Resolution(colonne=colonne_llm, multiplicateur=mult, note="llm")
 
-    # 5. Rien d'exploitable : précision demandée
+    # 5. Mesure par défaut (signalée dans la réponse) : colonne de CA, sinon colonne « Total »,
+    #    sinon l'unique colonne numérique. Ex. « Quel est le mois le plus fort ? » sur un tableau
+    #    Mois | Tunis | Sfax | ... | Total -> colonne Total.
+    defaut = mesure_par_defaut(df, numeriques)
+    if defaut:
+        return Resolution(colonne=defaut, note="defaut")
+
+    # 6. Rien d'exploitable : précision demandée
     return Resolution(colonne=None, note="inconnu",
                       options_precision=[{"colonne": c, "multiplicateur": None} for c in numeriques[:5]])

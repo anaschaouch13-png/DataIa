@@ -210,9 +210,11 @@ def _repondre_stat(df: pd.DataFrame, routage: Routage, analyse: AnalyseLangue, q
 # ---------------------------------------------------------------------------
 # Intent « text » (et « graph » en attendant la Phase 4) : RAG
 # ---------------------------------------------------------------------------
-def _repondre_rag(df: pd.DataFrame, file_id: int, analyse: AnalyseLangue, intent: str, temps: dict) -> Reponse:
+def _repondre_rag(df: pd.DataFrame, file_id: int, analyse: AnalyseLangue, intent: str, temps: dict,
+                  textes_rag: Optional[List[str]] = None) -> Reponse:
     debut = time.time()
-    textes = rag.lignes_en_textes(df)
+    # Phase 7 : pour un PDF / une image, le RAG indexe tous les tableaux + le texte du document
+    textes = textes_rag or rag.lignes_en_textes(df)
     index = rag.charger_ou_construire_index(int(file_id), textes)
     # Recherche hybride : mots-clés exacts (identifiants) + similarité vectorielle
     extraits = rag.recherche_hybride(index, df, textes, analyse.question_pour_llm)
@@ -229,7 +231,8 @@ def _repondre_rag(df: pd.DataFrame, file_id: int, analyse: AnalyseLangue, intent
 # Point d'entrée
 # ---------------------------------------------------------------------------
 def repondre(df: pd.DataFrame, file_id: int, question: str, analyse: AnalyseLangue, domaine: str,
-             id_utilisateur: Optional[int] = None, source: str = "") -> Reponse:
+             id_utilisateur: Optional[int] = None, source: str = "",
+             textes_rag: Optional[List[str]] = None) -> Reponse:
     debut_total = time.time()
     trace = demarrer_trace()
     temps: dict = {}
@@ -250,7 +253,7 @@ def repondre(df: pd.DataFrame, file_id: int, question: str, analyse: AnalyseLang
                           demande_precision=rg.demande_precision,
                           resultats_graphiques=[rg] if rg.figure else [])
     elif intent == "text":
-        reponse = _repondre_rag(df, file_id, analyse, intent, temps)
+        reponse = _repondre_rag(df, file_id, analyse, intent, temps, textes_rag)
     elif intent == "export":
         reponse = Reponse(texte=_msg("export", langue), intent=intent)
     else:   # forecast, anomaly, churn : selon le domaine de l'utilisateur (services/ml/registry.py)

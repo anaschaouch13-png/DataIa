@@ -4,6 +4,58 @@ Branche Git : `dataia-v2` (un commit par phase).
 
 ---
 
+## Phase 7 — Support multi-formats (CSV, Excel, PDF, images)
+
+### Packages (dépendances vérifiées ; aucun package existant modifié)
+- `pdfplumber==0.11.9` (et non 0.11.11, qui imposait Pillow 13 ; **Pillow 12.1.0 conservé**), `pdfminer.six`, `pypdfium2`.
+- `rapidocr-onnxruntime==1.4.4` (+ `onnxruntime`, `opencv-python`, `shapely`, `pyclipper`, `protobuf`, `flatbuffers`).
+
+### Base de données (migration `003`)
+- Sauvegarde `backups/dataia_20261126_034726_avant_migration_003.sql`.
+- `fichiers.type_fichier` : ENUM étendu à `('CSV','Excel','PDF','Image')`. Aucune ligne modifiée (8 / 8 / 90 / 8).
+
+### Fichiers ajoutés
+| Fichier | Rôle |
+|---|---|
+| `services/apercu.py` | Aperçu (colonnes, types, premières lignes, source, remarques) et 3-4 questions suggérées selon le fichier et le domaine. |
+| `migrations/003_phase7_types_fichiers.sql` | Nouveaux types de fichiers. |
+| `tests/test_parsers.py` | **9 tests** : CSV (latin-1, `;`, virgule décimale, ligne Total), Excel multi-feuilles, PDF (2 tableaux, Total, choix du tableau), OCR (8/8 lignes), questions suggérées par domaine, upload PDF + PNG par l'API, **réponses attendues** sur le PDF et l'image, question texte (RAG). |
+| `mesures/phase7_formats.json` | Temps d'analyse et de réponse. |
+
+### Fichiers modifiés
+- **`services/parsers.py`** (réécrit) : `analyser_fichier` (CSV, Excel, PDF, image, avec cache), `ResultatParsing.textes_rag`, `normaliser` (nombres en texte, lignes de total), `reconstruire_tableau` (OCR → tableau), `table_pour_question` ; `charger_dataframe` conservé pour la compatibilité.
+- **`services/fichiers.py`** : extensions `.pdf .png .jpg .jpeg`.
+- **`app.py`** : `/ask_ia` utilise `analyser_fichier` + `table_pour_question` et passe `textes_rag` (tous les tableaux + le texte).
+- **`services/assistant.py`** : paramètre `textes_rag`.
+- **`services/rag.py`** : recherche hybride indépendante de l'ordre des textes indexés.
+- **`services/router.py`** : règles **superlatifs** (top 1, sans LLM) et **questions de lecture** (RAG).
+- **`services/semantique.py`** : `mesure_par_defaut` ; « Nombre de ventes » exclu du concept « ventes ».
+- **`services/redaction.py`** : phrase directe pour un top 1, note « mesure par défaut ».
+- **`services/langue.py`** : noms propres arabes → latins (villes tunisiennes, pays).
+- **`templates/dashboard.html`** : formats acceptés.
+- **`requirements.txt`, `requirements-lock.txt`**.
+
+### Problèmes trouvés et corrigés
+| Problème (mesuré) | Correction |
+|---|---|
+| OCR : « 157 737 » lu en deux zones → mauvaise ligne d'en-tête, tableau faux | Fusion des zones proches d'une même ligne → 8 lignes sur 8 exactes |
+| Ligne « Total » du PDF : les sommes auraient été doublées (Tunis = 1 205 064) | Lignes de total retirées → 602 532 |
+| « Catégorie la plus forte » → RAG → « Électroménager » (faux) | Règle superlatif → top 1 → Informatique |
+| « Mois le plus fort » → demande de précision | Mesure par défaut (colonne Total) → Mai 237 858 |
+| Mesure « Nombre de ventes » prise pour le CA | Colonnes de comptage exclues du concept « ventes » |
+| « Que dit le rapport… » classé comme calcul | Règle « question de lecture » → RAG |
+| Phrase du PDF non retrouvée par le RAG | Texte découpé en phrases, sans les lignes de tableau |
+| « لتونس » ne trouvait pas la colonne Tunis | Noms propres arabes → latins |
+
+### Mesures (`mesures/phase7_formats.json`)
+- Analyse : PDF **0,31 s** ; image (OCR) **4,2 s**, puis instantané grâce au cache.
+- Réponses : superlatifs (catégorie, produit) **0,03 s**, sans LLM ; sommes et filtres 12 à 21 s (avec le routeur LLM) ; question texte (RAG) 11 s.
+
+### Tests
+`tests/tout_lancer.py` : Phases 1 à 6 OK (21/21, 33/33, 16, 17, 15, 7), **Phase 7 : 9/9**.
+
+---
+
 ## Phase 6 — Nouveau frontend (React) et simulateur what-if
 
 ### Architecture

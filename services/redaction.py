@@ -135,6 +135,10 @@ TEXTES = {
     "concept": {"fr": "« {c} » a été interprété comme la colonne `{col}`.",
                 "en": "“{c}” was interpreted as the column `{col}`.",
                 "ar": "تم اعتبار «{c}» هو العمود `{col}`."},
+    "defaut": {"fr": "Aucune mesure précisée dans la question : la colonne `{col}` a été utilisée. "
+                     "Précisez une autre colonne si besoin.",
+               "en": "No measure given in the question: the column `{col}` was used.",
+               "ar": "لم يتم تحديد مقياس في السؤال: تم استعمال العمود `{col}`."},
     "alternatives": {"fr": "Autres colonnes possibles : {cols}.", "en": "Other possible columns: {cols}.",
                      "ar": "أعمدة أخرى ممكنة: {cols}."},
     "precision_absent": {
@@ -240,6 +244,13 @@ def phrase_modele(res: ResultatStat, plan: PlanStat, langue: str) -> str:
     if op == "groupby":
         return (f"**{nom_operation(plan.agregation, langue)} {t('de', langue)} {mesure} {t('par', langue)} "
                 f"`{plan.colonne_groupe}`** ({res.details.get('nb_groupes', 0)} {t('groupes', langue)}) :")
+    if op == "top" and plan.n == 1 and plan.colonne_groupe and res.tableau is not None and len(res.tableau):
+        # « Quelle est la catégorie la plus forte ? » -> réponse directe
+        premiere = res.tableau.iloc[0]
+        extreme = {"fr": ("la plus élevée", "la plus faible"), "en": ("highest", "lowest"),
+                   "ar": ("الأعلى", "الأدنى")}.get(langue, ("la plus élevée", "la plus faible"))[plan.ordre == "asc"]
+        return (f"**`{plan.colonne_groupe}`** — {nom_operation(plan.agregation, langue).lower()} {t('de', langue)} "
+                f"{mesure} {extreme} : **{premiere.iloc[0]}** ({fmt(premiere.iloc[1])})")
     if op == "top":
         cible = f"`{plan.colonne_groupe}`" if plan.colonne_groupe else ""
         return (f"**Top {plan.n} {cible} {t('selon', langue)} {nom_operation(plan.agregation, langue).lower()} "
@@ -272,6 +283,8 @@ def ligne_provenance(res: ResultatStat, plan: PlanStat, resolution: Optional[Res
     if res.nb_valeurs_ignorees:
         morceaux.append(t("ignorees", langue, n=res.nb_valeurs_ignorees))
     texte = f"> 🔢 *{t('provenance', langue)} — " + " · ".join(morceaux) + "*"
+    if resolution and resolution.note == "defaut":
+        texte += "\n>\n> ℹ️ " + t("defaut", langue, col=resolution.colonne)
     if resolution and resolution.note == "concept":
         nom_c = NOMS_CONCEPTS[resolution.concept].get(langue, resolution.concept)
         texte += "\n>\n> ℹ️ " + t("concept", langue, c=nom_c, col=resolution.colonne)

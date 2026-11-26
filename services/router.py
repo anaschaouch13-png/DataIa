@@ -237,11 +237,49 @@ def liste_par_regles(df: pd.DataFrame, question: str) -> Optional[str]:
     return None
 
 
+# Questions de LECTURE d'un document (PDF / image) : le RAG, pas un calcul.
+# Mesuré : « Que dit le rapport sur les mois de fin d'année ? » était classé « stat » par le LLM.
+MOTIFS_TEXTE = [r"\bque dit\b", r"\bresum", r"\bexplique", r"selon le (rapport|document|texte|fichier)",
+                r"\bde quoi parle", r"what does", r"\bsummar", r"\bexplain", r"according to",
+                r"ماذا يقول", r"لخص", r"اشرح"]
+
+# Superlatifs : « la catégorie la plus forte », « le produit le plus vendu », « highest », « أعلى ».
+# Mesuré : « Quelle est la catégorie la plus forte ? » était envoyé au RAG, qui répondait FAUX
+# (Électroménager au lieu d'Informatique). C'est un calcul exact : top 1 par pandas.
+MOTIFS_SUPERLATIF = [
+    (r"\b(?:quel(?:le)?s?|which|what)\s+(?:est|sont|is|are)?\s*(?:le|la|les|l'|the)?\s*([a-z]\w*)\s+(?:a|ont|has|have|qui a|avec)?\s*(?:le|la|the)?\s*(?:plus|most|highest|biggest|largest|best)\b", "desc"),
+    (r"\b(?:le|la|l'|the)\s+([a-z]\w*)\s+(?:le|la|the)?\s*(?:plus|most|highest|biggest|largest|best|meilleur)", "desc"),
+    (r"\b(?:quel(?:le)?s?|which|what)\s+(?:est|sont|is|are)?\s*(?:le|la|les|l'|the)?\s*([a-z]\w*)\s+(?:a|ont|has|have|qui a|avec)?\s*(?:le|la|the)?\s*(?:moins|least|lowest|smallest|pire)\b", "asc"),
+    (r"\b(?:le|la|l'|the)\s+([a-z]\w*)\s+(?:le|la|the)?\s*(?:moins|least|lowest|smallest)", "asc"),
+    (r"(?:اي|ما هو|ما هي)\s+(?:ال)?(\S+)\s+(?:الاكثر|الاعلى|الافضل)", "desc"),
+]
+
+
+def superlatif_par_regles(df: pd.DataFrame, question: str) -> Optional[PlanStat]:
+    """« Quel est le X le plus fort ? » -> PlanStat(top, n=1, colonne_groupe=X)."""
+    q = normaliser(question)
+    if not re.search(r"plus|moins|most|least|highest|lowest|biggest|largest|smallest|best|meilleur|pire|اكثر|اعلى|افضل", q):
+        return None
+    for motif, ordre in MOTIFS_SUPERLATIF:
+        for mot in re.findall(motif, q):
+            colonne = colonne_pour_mot(df, mot)
+            if colonne and not stats.est_numerique(df, colonne):
+                return PlanStat(operation="top", colonne_groupe=colonne, n=1, ordre=ordre)
+    return None
+
+
 def router(df: pd.DataFrame, question: str) -> Routage:
     """Point d'entrée : règles d'abord, LLM (JSON contraint) ensuite."""
     intent = intent_par_regles(question)
     if intent:
         return Routage(intent=intent, source="regles")
+
+    if any(re.search(m, normaliser(question)) for m in MOTIFS_TEXTE):
+        return Routage(intent="text", source="regles")
+
+    superlatif = superlatif_par_regles(df, question)
+    if superlatif:
+        return Routage(intent="stat", source="regles", plan=superlatif)
 
     colonne_liste = liste_par_regles(df, question)
     if colonne_liste:
