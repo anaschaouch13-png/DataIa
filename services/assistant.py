@@ -23,7 +23,7 @@ import pandas as pd
 
 from config import REFORMULATION_LLM
 from services import charts, rag, redaction, stats
-from services.langue import AnalyseLangue
+from services.langue import AnalyseLangue, termes_recherche
 from services.llm import demarrer_trace, generer_reponse
 from services.ml import registry
 from services.prompts import (PROMPT_SYSTEME_REFORMULATION, prompt_systeme_rag,
@@ -63,6 +63,14 @@ class Reponse:
 
 
 MESSAGES_INTENT = {
+    "rag_nombre_non_source": {
+        "fr": "⚠️ *Attention : cette réponse contient un nombre qui n'apparaît pas dans les extraits du document. "
+              "Pour un chiffre exact, posez une question de calcul (ex. « Quel est le total de … ? »), calculée par pandas.*",
+        "en": "⚠️ *Warning: this answer contains a number that does not appear in the document excerpts. "
+              "For an exact figure, ask a calculation question (e.g. “What is the total of …?”), computed by pandas.*",
+        "ar": "⚠️ *تنبيه: تحتوي هذه الإجابة على رقم لا يظهر في مقتطفات المستند. "
+              "للحصول على رقم دقيق، اطرح سؤال حساب (مثلاً « ما هو مجموع … ؟ ») يحسبه pandas.*",
+    },
     "export": {
         "fr": "Pour exporter l'analyse, cliquez sur le bouton **« Export PDF »** en haut de la page.",
         "en": "To export the analysis, click the **“Export PDF”** button at the top of the page.",
@@ -217,13 +225,22 @@ def _repondre_rag(df: pd.DataFrame, file_id: int, analyse: AnalyseLangue, intent
     textes = textes_rag or rag.lignes_en_textes(df)
     index = rag.charger_ou_construire_index(int(file_id), textes)
     # Recherche hybride : mots-clés exacts (identifiants) + similarité vectorielle
-    extraits = rag.recherche_hybride(index, df, textes, analyse.question_pour_llm)
+    # Question en arabe sur un document français : termes français ajoutés à la recherche seulement
+    requete = analyse.question_pour_llm
+    if analyse.langue_reponse == "ar":
+        requete = f"{requete} {termes_recherche(analyse.question_pour_llm)}".strip()
+    extraits = rag.recherche_hybride(index, df, textes, requete)
     temps["recherche_rag_s"] = round(time.time() - debut, 2)
     texte = generer_reponse(
         prompt_systeme_rag(analyse.langue_reponse),
         prompt_utilisateur_rag(df, resume_categories(df), "\n".join(f"- {e}" for e in extraits),
                                analyse.question_pour_llm, analyse.langue_reponse),
         etape="rag")
+    # Garde-fou (Phase 9) : un nombre de la réponse qui ne figure ni dans les extraits ni dans la
+    # question n'a pas de source -> il est signalé (mesuré : « 142 210 167 TND » inventé en arabe).
+    autorises = [v for t in (*extraits, analyse.question_pour_llm) for n in redaction.nombres_du_texte(t) for v in n]
+    if not redaction.reformulation_valide(texte, autorises):
+        texte += "\n\n" + _msg("rag_nombre_non_source", analyse.langue_reponse)
     return Reponse(texte=texte, intent=intent)
 
 

@@ -150,11 +150,19 @@ class TestTypesEtRegles(unittest.TestCase):
         self.assertEqual(r.spec["incompatibilite"], "inc_nuage")
         r = generer("histogramme des ventes par région")              # catégories -> barres
         self.assertEqual((r.spec["incompatibilite"], r.spec["type"]), ("inc_histogramme_categories", "bar"))
-        # Donut avec des valeurs négatives (ventes_demo : CA négatifs) -> barres, pas un camembert
+        # Donut dont une PART (total par catégorie) est négative -> barres, pas un camembert
+        import pandas as pd
+        marges = pd.DataFrame({"Category": ["A", "A", "B", "B", "C"], "Total_Price": [100, 50, -80, 20, 30]})
+        r = generer("Total_Price par Category en donut", marges)
+        self.assertEqual((r.spec["incompatibilite"], r.spec["type"]), ("inc_camembert_negatif", "bar"))
+        r = generer("Graphique de Total_Price par Category", marges)          # choix automatique : pas de camembert
+        self.assertEqual(r.spec["type"], "bar")
+        # Quelques lignes négatives (remboursements) mais tous les totaux positifs -> le camembert est accepté
         from services.parsers import charger_dataframe as charger
         demo = charger(os.path.join(os.path.dirname(DOSSIER), "uploads", "ventes_demo_dataia.xlsx"))
+        self.assertTrue((demo["chiffre_affaires"] < 0).any())
         r = generer("ventes par catégorie en donut", demo)
-        self.assertEqual((r.spec["incompatibilite"], r.spec["type"]), ("inc_camembert_negatif", "bar"))
+        self.assertEqual((r.spec["incompatibilite"], r.spec["type"]), ("", "donut"))
         r = generer("courbe des prix", PRODUITS)                      # aucune date dans le fichier
         self.assertEqual(r.spec["incompatibilite"] if r.spec else "", "inc_ligne_aucune_date")
 

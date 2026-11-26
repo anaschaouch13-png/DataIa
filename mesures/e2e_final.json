@@ -1,0 +1,482 @@
+[
+  {
+    "etape": "1. Inscription + connexion Banque",
+    "attendu": "201 (ou 409 si déjà créé), domaine Banque",
+    "obtenu": "signup 409, login 200, domaine Banque",
+    "ok": true,
+    "remarque": "",
+    "duree_s": null
+  },
+  {
+    "etape": "1. Inscription + connexion E-commerce",
+    "attendu": "201 (ou 409 si déjà créé), domaine E-commerce",
+    "obtenu": "signup 409, login 200, domaine E-commerce",
+    "ok": true,
+    "remarque": "",
+    "duree_s": null
+  },
+  {
+    "etape": "1. Inscription avec un domaine hors liste",
+    "attendu": "400 refusé",
+    "obtenu": "400",
+    "ok": true,
+    "remarque": "",
+    "duree_s": null
+  },
+  {
+    "etape": "2. Upload XLSX (Banque)",
+    "attendu": "201, aperçu + questions suggérées",
+    "obtenu": "201, type Excel, 4 suggestions",
+    "ok": true,
+    "remarque": "",
+    "duree_s": 1.13
+  },
+  {
+    "etape": "2. Upload CSV (Banque)",
+    "attendu": "201, aperçu + questions suggérées",
+    "obtenu": "201, type CSV, 4 suggestions",
+    "ok": true,
+    "remarque": "",
+    "duree_s": 0.58
+  },
+  {
+    "etape": "2. Upload PDF (Banque)",
+    "attendu": "201, aperçu + questions suggérées",
+    "obtenu": "201, type PDF, 4 suggestions",
+    "ok": true,
+    "remarque": "",
+    "duree_s": 0.56
+  },
+  {
+    "etape": "2. Upload PNG (Banque)",
+    "attendu": "201, aperçu + questions suggérées",
+    "obtenu": "201, type Image, 4 suggestions",
+    "ok": true,
+    "remarque": "",
+    "duree_s": 4.96
+  },
+  {
+    "etape": "2. Upload CLIENTS (Banque)",
+    "attendu": "201, aperçu + questions suggérées",
+    "obtenu": "201, type CSV, 4 suggestions",
+    "ok": true,
+    "remarque": "",
+    "duree_s": 0.13
+  },
+  {
+    "etape": "2. Upload XLSX (E-commerce)",
+    "attendu": "201, aperçu + questions suggérées",
+    "obtenu": "201, type Excel, 4 suggestions",
+    "ok": true,
+    "remarque": "",
+    "duree_s": 0.75
+  },
+  {
+    "etape": "2. Upload CLIENTS (E-commerce)",
+    "attendu": "201, aperçu + questions suggérées",
+    "obtenu": "201, type CSV, 4 suggestions",
+    "ok": true,
+    "remarque": "",
+    "duree_s": 0.1
+  },
+  {
+    "etape": "3. Calcul fr (xlsx)",
+    "attendu": "CA Tunis = 1 107 535 (pandas)",
+    "obtenu": "Le chiffre d'affaires total à Tunis est de 1 107 535,92.  **Total de `chiffre_affaires`** : **1 107 535,92**  > 🔢 *Calculé par pandas — opération : `sum` · colo",
+    "ok": true,
+    "remarque": "intent stat",
+    "duree_s": 14.84
+  },
+  {
+    "etape": "3. Calcul en (xlsx)",
+    "attendu": "CA Tunis = 1 107 535 (pandas)",
+    "obtenu": "The total revenue in Tunis is $1,107,535.92.  **Total of `chiffre_affaires`** : **1,107,535.92**  > 🔢 *Computed by pandas — operation : `sum` · column : `chiffr",
+    "ok": true,
+    "remarque": "intent stat",
+    "duree_s": 14.36
+  },
+  {
+    "etape": "3. Calcul ar (xlsx)",
+    "attendu": "CA Tunis = 1 107 535 (pandas)",
+    "obtenu": "مجموع رقم المعاملات في تونس هو **1,107,535.92**.  **مجموع لـ `chiffre_affaires`** : **1,107,535.92**  > 🔢 *محسوب بواسطة pandas — العملية : `sum` · العمود : `chi",
+    "ok": true,
+    "remarque": "intent stat",
+    "duree_s": 16.23
+  },
+  {
+    "etape": "3. Calcul derja (xlsx)",
+    "attendu": "CA Tunis = 1 107 535 (pandas)",
+    "obtenu": "ℹ️ *Réponse en français : le modèle local (3B) ne maîtrise pas la derja, votre question a été traduite automatiquement.*  Le total du chiffre d'affaires dans Tu",
+    "ok": true,
+    "remarque": "intent stat",
+    "duree_s": 18.51
+  },
+  {
+    "etape": "3. Superlatif (xlsx)",
+    "attendu": "Informatique 1 891 204",
+    "obtenu": "**`categorie`** — total de `chiffre_affaires` la plus élevée : **Informatique** (1 891 204,59)  | categorie | sum(chiffre_affaires) | |---|---| | Informatique |",
+    "ok": true,
+    "remarque": "",
+    "duree_s": 0.21
+  },
+  {
+    "etape": "3. Calcul PDF : Quel est le CA total de Tunis ?",
+    "attendu": "602 532",
+    "obtenu": "Le CA total de Tunis est de 602 532.  **Total de `Tunis`** : **602 532**  > 🔢 *Calculé par pandas — opération : `sum` · colonne : `Tunis` · 12 lignes utilisées ",
+    "ok": true,
+    "remarque": "",
+    "duree_s": 23.37
+  },
+  {
+    "etape": "3. Calcul PDF : Quelle est la catégorie la plus forte ?",
+    "attendu": "Informatique 1 037 167",
+    "obtenu": "**`Catégorie`** — total de `Chiffre d'affaires (TND)` la plus élevée : **Informatique** (1 037 167)  | Catégorie | sum(Chiffre d'affaires (TND)) | |---|---| | I",
+    "ok": true,
+    "remarque": "",
+    "duree_s": 0.06
+  },
+  {
+    "etape": "3. Calcul PDF : Quel est le mois le plus fort ?",
+    "attendu": "Mai 237 858",
+    "obtenu": "Le mois le plus fort est Mai avec un total de 237 858.  **Maximum de `Total`** : **237 858**  | Mois | Tunis | Sfax | Sousse | Nabeul | Bizerte | Total | |---|-",
+    "ok": true,
+    "remarque": "Le tableau du PDF donne Mai (Juillet 197 381 = meilleur mois de Tunis), voir JUSTIFICATIONS §57",
+    "duree_s": 12.42
+  },
+  {
+    "etape": "3. Calcul PNG : Quel est le produit le plus vendu en CA ?",
+    "attendu": "Ordinateur portable 594 715",
+    "obtenu": "**`Produit`** — total de `Chiffre d'affaires (TND)` la plus élevée : **Ordinateur portable** (594 715)  | Produit | sum(Chiffre d'affaires (TND)) | |---|---| | ",
+    "ok": true,
+    "remarque": "image OCR",
+    "duree_s": 0.05
+  },
+  {
+    "etape": "3. Calcul PNG : Quelle est la quantité de télévisions ?",
+    "attendu": "441",
+    "obtenu": "La quantité de télévisions vendues est 441.  **Total de `Quantité vendue`** : **441**  > 🔢 *Calculé par pandas — opération : `sum` · colonne : `Quantité vendue`",
+    "ok": true,
+    "remarque": "image OCR",
+    "duree_s": 18.29
+  },
+  {
+    "etape": "3. Graphique pie",
+    "attendu": "pie",
+    "obtenu": "pie",
+    "ok": true,
+    "remarque": "",
+    "duree_s": 0.87
+  },
+  {
+    "etape": "3. Graphique bar",
+    "attendu": "bar",
+    "obtenu": "bar",
+    "ok": true,
+    "remarque": "",
+    "duree_s": 0.38
+  },
+  {
+    "etape": "3. Graphique bar_groupe",
+    "attendu": "bar_groupe",
+    "obtenu": "bar_groupe",
+    "ok": true,
+    "remarque": "",
+    "duree_s": 0.41
+  },
+  {
+    "etape": "3. Graphique bar_empile",
+    "attendu": "bar_empile",
+    "obtenu": "bar_empile",
+    "ok": true,
+    "remarque": "",
+    "duree_s": 0.46
+  },
+  {
+    "etape": "3. Graphique line",
+    "attendu": "line",
+    "obtenu": "line",
+    "ok": true,
+    "remarque": "",
+    "duree_s": 0.36
+  },
+  {
+    "etape": "3. Graphique area",
+    "attendu": "area",
+    "obtenu": "area",
+    "ok": true,
+    "remarque": "",
+    "duree_s": 0.67
+  },
+  {
+    "etape": "3. Graphique donut",
+    "attendu": "donut",
+    "obtenu": "donut",
+    "ok": true,
+    "remarque": "",
+    "duree_s": 0.34
+  },
+  {
+    "etape": "3. Graphique scatter",
+    "attendu": "scatter",
+    "obtenu": "scatter",
+    "ok": true,
+    "remarque": "",
+    "duree_s": 0.4
+  },
+  {
+    "etape": "3. Graphique histogram",
+    "attendu": "histogram",
+    "obtenu": "histogram",
+    "ok": true,
+    "remarque": "",
+    "duree_s": 0.32
+  },
+  {
+    "etape": "3. Graphique box",
+    "attendu": "box",
+    "obtenu": "box",
+    "ok": true,
+    "remarque": "",
+    "duree_s": 0.34
+  },
+  {
+    "etape": "3. Graphique heatmap",
+    "attendu": "heatmap",
+    "obtenu": "heatmap",
+    "ok": true,
+    "remarque": "",
+    "duree_s": 0.35
+  },
+  {
+    "etape": "3. Graphique en",
+    "attendu": "graphique ventes par région",
+    "obtenu": "pie",
+    "ok": true,
+    "remarque": "",
+    "duree_s": 0.38
+  },
+  {
+    "etape": "3. Graphique ar",
+    "attendu": "graphique ventes par région",
+    "obtenu": "pie",
+    "ok": true,
+    "remarque": "",
+    "duree_s": 0.32
+  },
+  {
+    "etape": "3. Graphique derja",
+    "attendu": "graphique ventes par région",
+    "obtenu": "pie",
+    "ok": true,
+    "remarque": "",
+    "duree_s": 0.38
+  },
+  {
+    "etape": "3. Question texte fr (PDF)",
+    "attendu": "novembre / décembre",
+    "obtenu": "Le rapport indique que les mois de novembre et décembre sont les plus forts de l'année, grâce aux achats de fin d'année.",
+    "ok": true,
+    "remarque": "intent text",
+    "duree_s": 9.66
+  },
+  {
+    "etape": "3. Question texte en (PDF)",
+    "attendu": "november / december",
+    "obtenu": "The report indicates that November and December are the strongest months of the year, with the highest sales figures.",
+    "ok": true,
+    "remarque": "intent text",
+    "duree_s": 3.17
+  },
+  {
+    "etape": "3. Question texte ar (PDF)",
+    "attendu": "نوفمبر / ديسمبر / 11 / 12",
+    "obtenu": "التقرير يشير إلى أن شهر نوفمبر هو الشهر الذي حقق فيه أكبر رقم إجمالي للعائد من الأعمال مقارنة بالأشهر الأخرى. كما أنه يشير إلى أن ديسمبر هو الشهر الثاني الذي حق",
+    "ok": true,
+    "remarque": "intent text",
+    "duree_s": 13.03
+  },
+  {
+    "etape": "4. forecast (Banque)",
+    "attendu": "intent forecast, modèle enregistré",
+    "obtenu": "📈 **Prévision de `chiffre_affaires`** par mois — modèle retenu : **LightGBM**  **Précision : 90,27 % (MAPE = 9,73 %)** s",
+    "ok": true,
+    "remarque": "",
+    "duree_s": 3.79
+  },
+  {
+    "etape": "4. anomaly (Banque)",
+    "attendu": "intent anomaly, modèle enregistré",
+    "obtenu": "🔎 **7 anomalie(s)** détectée(s) sur 1 793 lignes (Isolation Forest, colonnes : `quantite`, `prix_unitaire`, `chiffre_aff",
+    "ok": true,
+    "remarque": "",
+    "duree_s": 1.56
+  },
+  {
+    "etape": "4. forecast (E-commerce)",
+    "attendu": "intent forecast, modèle enregistré",
+    "obtenu": "📈 **Prévision de `chiffre_affaires`** par mois — modèle retenu : **LightGBM**  **Précision : 90,27 % (MAPE = 9,73 %)** s",
+    "ok": true,
+    "remarque": "",
+    "duree_s": 0.69
+  },
+  {
+    "etape": "4. anomaly (E-commerce)",
+    "attendu": "intent anomaly, modèle enregistré",
+    "obtenu": "🔎 **7 anomalie(s)** détectée(s) sur 1 793 lignes (Isolation Forest, colonnes : `quantite`, `prix_unitaire`, `chiffre_aff",
+    "ok": true,
+    "remarque": "",
+    "duree_s": 1.97
+  },
+  {
+    "etape": "4. Churn (Banque)",
+    "attendu": "scores + 2 graphiques",
+    "obtenu": "👥 **125 client(s) sur 300 (41,7 %) présentent un risque de départ** (probabilité ≥ 50 %).  Modèle : arbre de décision (p",
+    "ok": true,
+    "remarque": "",
+    "duree_s": 0.29
+  },
+  {
+    "etape": "4. Churn (E-commerce)",
+    "attendu": "refus poli (réservé Banque)",
+    "obtenu": "Désolé, le modèle **Prédiction du départ des clients (churn)** n'est pas proposé pour votre domaine d'activité (**E-commerce**). Il est réservé au(x) domaine(s)",
+    "ok": true,
+    "remarque": "",
+    "duree_s": 0.06
+  },
+  {
+    "etape": "5. Simulateur forecast (Banque)",
+    "attendu": "200 + résultat",
+    "obtenu": "200 {'critere': 'mape', 'figure': {'data': [{'fill': 'toself', 'fillcolor': 'rgba(10,132,224,0",
+    "ok": true,
+    "remarque": "",
+    "duree_s": null
+  },
+  {
+    "etape": "5. Simulateur anomaly (Banque)",
+    "attendu": "200 + résultat",
+    "obtenu": "200 {'anomalie': False, 'percentile': 98.3, 'raison': 'chiffre_affaires = 1 445,62 au lieu de ",
+    "ok": true,
+    "remarque": "",
+    "duree_s": null
+  },
+  {
+    "etape": "5. Simulateur churn (Banque)",
+    "attendu": "200 + résultat",
+    "obtenu": "200 {'entrees': {'active_member': 1.0, 'age': 37.0, 'balance': 97198.54000000001, 'country': '",
+    "ok": true,
+    "remarque": "",
+    "duree_s": null
+  },
+  {
+    "etape": "5. Simulateur forecast (E-commerce)",
+    "attendu": "200 + résultat",
+    "obtenu": "200 {'critere': 'mape', 'figure': {'data': [{'fill': 'toself', 'fillcolor': 'rgba(10,132,224,0",
+    "ok": true,
+    "remarque": "",
+    "duree_s": null
+  },
+  {
+    "etape": "5. Simulateur anomaly (E-commerce)",
+    "attendu": "200 + résultat",
+    "obtenu": "200 {'anomalie': False, 'percentile': 98.3, 'raison': 'chiffre_affaires = 1 445,62 au lieu de ",
+    "ok": true,
+    "remarque": "",
+    "duree_s": null
+  },
+  {
+    "etape": "5. Simulateur churn (E-commerce)",
+    "attendu": "403 refusé",
+    "obtenu": "403",
+    "ok": true,
+    "remarque": "",
+    "duree_s": null
+  },
+  {
+    "etape": "6. Données nettoyées (csv, xlsx, rapport)",
+    "attendu": "200 pour chaque lien",
+    "obtenu": "types ['anomalie', 'churn', 'prevision'], 9/9 OK",
+    "ok": true,
+    "remarque": "",
+    "duree_s": null
+  },
+  {
+    "etape": "6. Téléchargement d'un autre compte",
+    "attendu": "403",
+    "obtenu": "403",
+    "ok": true,
+    "remarque": "",
+    "duree_s": null
+  },
+  {
+    "etape": "7. Rapport PDF complet",
+    "attendu": "sections + graphiques + ML + arabe",
+    "obtenu": "17 pages, 17 images, 1497 Ko, sections True, arabe True",
+    "ok": true,
+    "remarque": "",
+    "duree_s": 7.63
+  },
+  {
+    "etape": "8. Modifier le profil",
+    "attendu": "nom mis à jour",
+    "obtenu": "200 E2E Banque (modifié)",
+    "ok": true,
+    "remarque": "",
+    "duree_s": null
+  },
+  {
+    "etape": "8. Admin par une utilisatrice",
+    "attendu": "403",
+    "obtenu": "403",
+    "ok": true,
+    "remarque": "",
+    "duree_s": null
+  },
+  {
+    "etape": "8. Tableau de bord admin",
+    "attendu": "liste des comptes (dont E2E) + page Jinja 200",
+    "obtenu": "10 comptes, E2E présents True, page 200",
+    "ok": true,
+    "remarque": "session admin du client de test Flask",
+    "duree_s": null
+  },
+  {
+    "etape": "8. Fichier d'un autre compte (IDOR)",
+    "attendu": "404",
+    "obtenu": "pdf 404, ask 404",
+    "ok": true,
+    "remarque": "",
+    "duree_s": null
+  },
+  {
+    "etape": "8. Déconnexion (POST) puis accès refusé",
+    "attendu": "401 sur l'API, /dashboard redirige vers /login",
+    "obtenu": "avant 200; après : API [401, 401, 401], /ask_ia 401, /dashboard 302",
+    "ok": true,
+    "remarque": "",
+    "duree_s": null
+  },
+  {
+    "etape": "9. Tables InnoDB + clés étrangères",
+    "attendu": "toutes InnoDB, FK présentes",
+    "obtenu": "9 tables, InnoDB : True, 10 FK",
+    "ok": true,
+    "remarque": "",
+    "duree_s": null
+  },
+  {
+    "etape": "9. Lignes enregistrées (comptes E2E)",
+    "attendu": "chaque table remplie",
+    "obtenu": "{'fichiers': 14, 'questions': 66, 'graphiques': 39, 'modeles_ml': 10, 'simulations': 10, 'rapports': 2}",
+    "ok": true,
+    "remarque": "",
+    "duree_s": null
+  },
+  {
+    "etape": "9. Migrations appliquées",
+    "attendu": "001, 002, 003",
+    "obtenu": "['001', '002', '003']",
+    "ok": true,
+    "remarque": "",
+    "duree_s": null
+  }
+]

@@ -4,6 +4,50 @@ Branche Git : `dataia-v2` (un commit par phase).
 
 ---
 
+## Phase 9 — Test de bout en bout et documentation
+
+### Test de bout en bout (`tests/e2e_final.py`)
+Le script joue le parcours complet par HTTP, sur le serveur lancé, avec deux comptes conservés (`e2e.banque@dataia.local` et `e2e.ecommerce@dataia.local`, mot de passe `Demo2026!`) :
+1. inscriptions ;
+2. upload CSV / Excel / PDF / image ;
+3. calculs, graphiques (11 variantes) et questions de texte en fr / en / ar / derja ;
+4. prévision et anomalies pour les deux comptes, churn pour la Banque et refus pour l'E-commerce ;
+5. simulateur ;
+6. téléchargements ;
+7. PDF complet ;
+8. profil, admin, IDOR, déconnexion et accès refusé ;
+9. tables InnoDB, clés étrangères, lignes enregistrées et migrations.
+
+Le tableau est écrit dans `mesures/E2E_RESULTATS.md`, et les données brutes dans `mesures/e2e_final.json`.
+
+| Passage | Résultat |
+|---|---|
+| 1ᵉʳ | **56 / 60** : 4 échecs (ci-dessous) |
+| 2ᵉ, après corrections | **60 / 60** |
+
+### Problèmes trouvés et corrigés (JUSTIFICATIONS §63)
+| Problème | Avant | Correction | Après |
+|---|---|---|---|
+| « évolution des ventes par mois » classée en texte par le LLM → RAG + indexation de 1 793 lignes | **> 300 s**, pas de graphique | Règle « évolution / tendance / trend / تطور + période » → `graph` (`services/router.py`) | **0,36 s**, courbe |
+| Camembert / donut refusés pour 2 lignes négatives alors que les totaux par catégorie sont positifs | barres à la place | `_parts_negatives` : contrôle sur les valeurs agrégées, aussi dans le choix automatique (`services/charts.py`) | camembert / donut |
+| Question de texte en arabe sur un PDF français : total inventé (« 142,210,167 دينار ») | réponse fausse | Termes français ajoutés à la requête de recherche (`langue.termes_recherche`) + garde-fou des nombres sur le RAG (`assistant._repondre_rag`) | cite novembre et décembre, rien d'inventé |
+
+### Tests ajoutés
+- `tests/test_routeur_hybride.py` : `test_evolution_dans_le_temps_est_un_graphique`, `test_termes_de_recherche_arabes`.
+- `tests/test_graphiques.py` : un total négatif → barres (demandé et automatique) ; des lignes négatives avec des totaux positifs → donut accepté.
+
+### Documentation
+| Fichier | Contenu |
+|---|---|
+| `GUIDE_COMPRENDRE_DATAIA.md` | Cours complet : vue d'ensemble (diagramme Mermaid), phases 0 à 9 (problème, solution, fichiers, alternatives, trajet d'une requête, mesures, test, questions du jury), glossaire, les 3 modèles ML, limites, parcours de révision |
+| `ARCHITECTURE.md` | Composants, chemin d'une question, modèles par domaine, schéma de la base (Mermaid), API, sécurité |
+| `GUIDE_DEMARRAGE.md` | Prérequis, installation, lancement, premier test, tests, problèmes fréquents |
+| `EXPLICATION_DETAILLEE.md` | Le code fichier par fichier |
+| `README.md` | Index de la documentation |
+| `.env.example` | Variables des Phases 5 à 8 ajoutées (ML, frontend, polices du PDF) |
+
+---
+
 ## Phase 8 — Export PDF complet (graphiques, ML, simulations, arabe)
 
 ### Fichiers ajoutés
