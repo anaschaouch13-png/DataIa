@@ -301,6 +301,23 @@ def simulations():
 
 
 # ---------------------------------------------------------------------------
+# Rapport PDF complet (Phase 8)
+# ---------------------------------------------------------------------------
+@api.post("/rapport/<int:id_fichier>/pdf")
+@login_required
+def rapport_pdf(id_fichier):
+    if not fichier_de_utilisateur(id_fichier, current_user.id):
+        return erreur("Fichier introuvable.", 404)
+    from services.pdf_export import generer_rapport
+    try:
+        infos = generer_rapport(current_user.id, id_fichier)
+    except Exception as e:
+        log.exception("Rapport PDF impossible")
+        return erreur(f"Génération du PDF impossible : {e}", 500)
+    return send_file(infos["chemin"], as_attachment=True, download_name=infos["nom"], mimetype="application/pdf")
+
+
+# ---------------------------------------------------------------------------
 # Données nettoyées (Phase 5.5)
 # ---------------------------------------------------------------------------
 @api.get("/donnees_nettoyees")

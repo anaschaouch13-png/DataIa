@@ -440,6 +440,12 @@ def export_pdf():
     try:
         # Récupération des données envoyées par le Frontend
         data = request.get_json()
+        # Phase 8 : rapport COMPLET (questions, graphiques, modèles ML, simulations, arabe)
+        if data.get('file_id'):
+            from services.pdf_export import generer_rapport
+            infos = generer_rapport(current_user.id, int(data['file_id']))
+            return send_file(infos['chemin'], as_attachment=True, download_name=infos['nom'],
+                             mimetype='application/pdf')
         history = data.get('history', '')
         conseil = data.get('conseil', 'Aucun conseil généré.')
 

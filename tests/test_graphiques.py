@@ -150,6 +150,11 @@ class TestTypesEtRegles(unittest.TestCase):
         self.assertEqual(r.spec["incompatibilite"], "inc_nuage")
         r = generer("histogramme des ventes par région")              # catégories -> barres
         self.assertEqual((r.spec["incompatibilite"], r.spec["type"]), ("inc_histogramme_categories", "bar"))
+        # Donut avec des valeurs négatives (ventes_demo : CA négatifs) -> barres, pas un camembert
+        from services.parsers import charger_dataframe as charger
+        demo = charger(os.path.join(os.path.dirname(DOSSIER), "uploads", "ventes_demo_dataia.xlsx"))
+        r = generer("ventes par catégorie en donut", demo)
+        self.assertEqual((r.spec["incompatibilite"], r.spec["type"]), ("inc_camembert_negatif", "bar"))
         r = generer("courbe des prix", PRODUITS)                      # aucune date dans le fichier
         self.assertEqual(r.spec["incompatibilite"] if r.spec else "", "inc_ligne_aucune_date")
 
