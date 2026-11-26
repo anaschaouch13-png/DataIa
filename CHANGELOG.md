@@ -4,6 +4,71 @@ Branche Git : `dataia-v2` (un commit par phase).
 
 ---
 
+## Phase 4 — Graphiques à la demande (tous types, calculés par pandas)
+
+### Base de données (migration `002`)
+- Sauvegarde : `backups/dataia_20261126_011349_avant_migration_002.sql` (vérifiée).
+- Nouvelle table **`graphiques`** : utilisateur, question, fichier, source, type, titre, `spec_json`, `chemin_json`, `chemin_png`, avec 3 clés étrangères.
+- Aucune ligne existante modifiée (8 / 7 / 70 / 8 lignes avant = après).
+
+### Package installé (accord donné)
+- `kaleido==1.5.2`, qui installe aussi `choreographer`, `logistro`, `simplejson` et `platformdirs`. Ce sont uniquement de nouveaux packages ; aucun package existant n'a été mis à jour.
+- **Aucune copie de Chrome téléchargée** : kaleido utilise le Chrome installé (`CHROME_PATH` dans `.env`).
+
+### Fichiers ajoutés
+| Fichier | Rôle |
+|---|---|
+| `services/charts.py` | Moteur de graphiques : type demandé et colonnes par règles, spec LLM contrainte seulement si une colonne manque, validation et incompatibilités, données pandas, figure Plotly (11 variantes), titre et explications en 3 langues, suggestions de types, export PNG persistant en arrière-plan, nettoyage de l'ancien format, rechargement de l'historique. |
+| `migrations/002_phase4_graphiques.sql` | Table `graphiques`. |
+| `tests/test_graphiques.py` | **17 tests** : valeurs de chaque figure comparées à pandas, 11 variantes, règles automatiques, incompatibilités, suggestions, 4 langues, ancien format, export PNG. |
+| `tests/benchmark_graphiques.py`, `mesures/phase4_graphiques.json` | Mesure du temps de génération. |
+
+### Fichiers modifiés
+- **`services/assistant.py`** : l'intent `graph` passe par `charts.generer` (fini le RAG pour les graphiques) ; `Reponse.graphique`.
+- **`services/prompts.py`** : suppression de la règle « produis un JSON `type_graph` » ; le RAG n'a plus le droit de produire un graphique.
+- **`services/router.py`** : règles de l'intent `graph` complétées (barres, aire, donut, anneau, nuage de points, boîte à moustaches, heatmap, corrélation, pie, arabe : منحنى / دائري / خريطة حرارية).
+- **`app.py`** :
+  - `/ask_ia` enregistre le graphique (JSON + ligne en base, PNG en arrière-plan) et renvoie `graphique` et `id_question` ;
+  - `/chat/<id>` recharge les figures de l'historique et nettoie l'ancien format ; l'historique est aussi filtré par utilisateur ;
+  - nouvelle route `/vendor/plotly.min.js` ;
+  - Chrome préchauffé au démarrage.
+- **`templates/chat.html`** :
+  - plotly.js local ;
+  - historique rendu en Markdown, avec ses graphiques ;
+  - ancien format remplacé par un avertissement et un bouton « Régénérer avec le nouveau moteur » ;
+  - `afficherGraphique()` remplace l'ancien `renderPlotlyGraph()` (qui dessinait les valeurs écrites par le LLM).
+- **`templates/base.html`** : retrait du CDN `plotly-latest` (version 1.58.5, chargé sur toutes les pages).
+- **`config.py`, `.env`, `.env.example`** : `GRAPH_FOLDER`, `CHROME_PATH`, `GRAPH_MAX_CATEGORIES`, `GRAPH_MAX_PIE`, `GRAPH_MAX_POINTS`.
+- **`requirements.txt`, `requirements-lock.txt`** : kaleido.
+
+### Problèmes trouvés et corrigés pendant la phase
+| Problème | Correction |
+|---|---|
+| CDN `plotly-latest` figé en 1.58.5 (2021) | plotly.js 3.3.1 servi en local |
+| « Nuage de points entre Quantity et Total_Price » : axes inversés | Ordre des colonnes = ordre dans la question |
+| Deux colonnes numériques citées → barres (Quantity a 20 valeurs) | La règle « 2 nombres → nuage de points » est prioritaire |
+| « graphique de Total_Price » → courbe (via le LLM) | La règle « 1 nombre → histogramme » est appliquée sans LLM |
+| « Courbe des prix » le long de `product_id` | Identifiants exclus des axes et des corrélations |
+| Courbe impossible remplacée par un camembert | Remplacée par des barres (mêmes axes) |
+| Heatmap : « 0.03 » au lieu de « 0,03 » | Texte formaté par Plotly (séparateurs selon la langue) |
+| « Barres groupées » et « courbe des ventes » passaient par le LLM (9 à 15 s) | Règles complétées : 0,35 à 0,46 s |
+
+### Mesures
+- Graphique **sans LLM** : **0,47 s en moyenne** (14 demandes sur 15).
+- Graphique **avec LLM** (axe non précisé) : ~9 s.
+- PNG : ~4 s pour le premier (démarrage de Chrome, au lancement de Flask), puis **~0,4 s**, en arrière-plan.
+- Avant / après sur « CA par région » : **65 à 75 s, valeurs fausses → 0,39 s, valeurs exactes**.
+
+### Tests Phase 4
+| Suite | Résultat |
+|---|---|
+| `tests/test_graphiques.py` (17 tests) | ✅ |
+| Test de bout en bout `/ask_ia` → ligne `graphiques` → PNG → historique | ✅ (1,28 s, 0 appel LLM) |
+| Non-régression Phase 3 (`tests/test_routeur_hybride.py`, 16 tests) | ✅ |
+| Non-régression Phases 1 et 2 (scripts de test) | ✅ 21/21 et 33/33 |
+
+---
+
 ## Phase 3 — Routeur hybride (le LLM comprend, pandas calcule)
 
 ### Corrections préalables demandées

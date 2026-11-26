@@ -41,6 +41,16 @@
   27. [Reformulation par le LLM sous contrôle](#27-reformulation-par-le-llm-sous-contrôle)
   28. [Temps de réponse : mesures avant / après](#28-temps-de-réponse--mesures-avant--après)
   29. [Modèle demandé hors domaine](#29-modèle-demandé-hors-domaine)
+- **Phase 4 — Graphiques à la demande**
+  30. [Graphiques calculés par pandas, jamais par le LLM](#30-graphiques-calculés-par-pandas-jamais-par-le-llm)
+  31. [Règles de choix du type de graphique](#31-règles-de-choix-du-type-de-graphique)
+  32. [Type demandé mais inadapté](#32-type-demandé-mais-inadapté)
+  33. [Plotly, et plotly.js servi en local](#33-plotly-et-plotlyjs-servi-en-local)
+  34. [Export PNG : kaleido + Chrome déjà installé](#34-export-png--kaleido--chrome-déjà-installé)
+  35. [Table `graphiques` (migration 002)](#35-table-graphiques-migration-002)
+  36. [Graphiques de l'ancien format](#36-graphiques-de-lancien-format)
+  37. [Tout à la demande, rien d'automatique à l'upload](#37-tout-à-la-demande-rien-dautomatique-à-lupload)
+  38. [Temps de génération d'un graphique](#38-temps-de-génération-dun-graphique)
 
 ---
 
@@ -500,3 +510,148 @@ Exemple de sortie réelle : `{"intent": "stat", "operation": "count", "colonne":
 **Choix.** `services/ml/registry.py` décrit les modèles disponibles par domaine : tous les domaines ont la prévision du CA et la détection d'anomalies ; la Banque a en plus le churn. Si un utilisateur E-commerce demande « quels clients risquent de partir ? », le système répond poliment que ce modèle est réservé au domaine **Banque**, liste les modèles disponibles pour lui et rappelle qu'on peut changer de domaine dans le profil (testé).
 
 Le registre est créé dès la Phase 3 pour que le routeur l'utilise. La Phase 5 y branchera l'exécution des modèles, sans changer le routeur.
+
+---
+
+# Phase 4 — Graphiques à la demande
+
+## 30. Graphiques calculés par pandas, jamais par le LLM
+
+**Avant.** Le LLM écrivait lui-même un JSON `{"type_graph": "pie", "data": {"x": [...], "y": [...]}}` avec les valeurs du graphique. Mesuré : pour « CA par région », il dessinait **2 régions sur 5**, avec des valeurs inventées, en 65 à 75 s.
+
+**Maintenant** (`services/charts.py`), en 4 étapes :
+1. **Règles** : le type demandé (« en camembert », « courbe », « nuage de points », « رسم دائري »…), les colonnes (citées, ou concept « ventes » → `Total_Price`), le regroupement (« par région »), la période (« par mois »), l'agrégation (« moyenne », « nombre de ») et les filtres **ancrés** (« en 2024 », « à Tunis »). Ce sont les mêmes règles qu'en Phase 3, valables dans les 4 langues.
+2. **LLM seulement si une colonne reste inconnue** (ex. « courbe des ventes » : quel axe X ?). Il produit une **spec JSON contrainte** `{type, x, y, agg, color}`, avec les noms de colonnes en `enum`. Il choisit des **colonnes**, jamais des **valeurs**. Sur le banc de mesure, 13 demandes sur 14 n'ont eu besoin d'**aucun** appel au LLM.
+3. **pandas calcule** les données : `groupby`, ré-échantillonnage par période, `corr()`, valeurs brutes pour le nuage de points, l'histogramme et la boîte à moustaches.
+4. **Plotly dessine.** Le titre est construit en Python (« Total de Total_Price par Region ») et non par le LLM, qui pourrait y glisser un chiffre.
+
+**Vérifié par les tests** (`tests/test_graphiques.py`) : pour chaque type, les valeurs de la figure sont **recalculées avec pandas et comparées** (camembert = `groupby().sum()`, barres groupées = `pivot_table`, courbe = somme mensuelle, heatmap = `df.corr()`, filtre « Tunis »…).
+
+> **Jury :** *« D'où viennent les chiffres du graphique ? »*
+> **Réponse :** De pandas, comme pour les calculs : le LLM ne fait au plus que choisir les colonnes, dans une liste fermée. Sous chaque graphique, une ligne de provenance indique le calcul (« Total de Total_Price par Region · 1 000 lignes utilisées sur 1 000 »), et les tests comparent chaque valeur dessinée à pandas.
+
+## 31. Règles de choix du type de graphique
+
+Quand l'utilisateur ne précise pas le type, le choix suit les règles du cahier des charges, et **la raison est écrite dans la réponse** (ex. « Type choisi automatiquement : **courbe**, car `Date` est une date et la valeur est numérique »).
+
+| Données concernées | Type choisi | Pourquoi |
+|---|---|---|
+| ≥ 3 colonnes numériques | **Carte de chaleur des corrélations** | Montre d'un coup les liens entre toutes les paires de colonnes |
+| 2 colonnes numériques | **Nuage de points** (+ corrélation de Pearson) | Montre la relation entre deux mesures |
+| Date + nombre | **Courbe** | L'axe du temps est continu et ordonné ; la courbe montre la tendance |
+| Catégorie + nombre, **≤ 6 catégories** | **Camembert** | Parts d'un total, encore lisibles |
+| Catégorie + nombre, > 6 catégories | **Barres** | Au-delà de 6 parts, un camembert devient illisible ; les barres se comparent facilement |
+| 2 catégories + nombre | **Barres groupées** | Compare une 2e dimension dans chaque catégorie |
+| 1 seule colonne numérique | **Histogramme** | Montre la distribution des valeurs |
+
+**Détails.**
+- La période de la courbe est choisie selon l'étendue des dates (≤ 45 jours → jour, ≤ 6 mois → semaine, ≤ 3 ans → mois…), sauf si l'utilisateur la précise.
+- Le camembert n'est proposé automatiquement que pour une **somme** ou un **comptage** : une moyenne n'a pas de sens en « parts ».
+- Au-delà de 20 barres (ou 8 parts de camembert), les petites catégories sont regroupées dans « Autres », et c'est signalé.
+- Les **identifiants** (`product_id`, `Invoice_ID`) ne sont jamais utilisés comme axe ni dans une corrélation (trouvé en test : une « courbe des prix » le long de `product_id` n'avait aucun sens).
+
+## 32. Type demandé mais inadapté
+
+**Choix.** Le type demandé est respecté **s'il convient aux données**. Sinon, le système :
+1. **explique** pourquoi : « ⚠️ Une **courbe** sert à montrer une évolution : elle a besoin d'une colonne de dates sur l'axe horizontal, or `Region` est une catégorie » ;
+2. trace un **type adapté**, en restant proche de la demande (une courbe impossible devient des barres, avec les mêmes axes, plutôt qu'un camembert) ;
+3. propose les **autres types possibles** pour ces données, en boutons cliquables. Chaque suggestion est réécrite pour être comprise par le moteur, et un test vérifie qu'elle produit bien le type annoncé.
+
+| Demande | Problème | Remplacement |
+|---|---|---|
+| Courbe / aire sur une catégorie | Pas de date sur l'axe X | Barres |
+| Courbe dans un fichier sans date | Aucune évolution possible | Explication seule |
+| Camembert sans catégorie, ou avec des valeurs négatives | Pas de « parts » | Type automatique |
+| Nuage de points avec une seule colonne numérique | Il en faut deux | Histogramme |
+| Histogramme « par catégorie » | Un histogramme montre une distribution | Barres |
+| Barres groupées avec une seule catégorie | Il en faut deux | Barres simples |
+| Heatmap avec moins de 2 colonnes numériques | Pas de corrélation possible | Type automatique |
+
+## 33. Plotly, et plotly.js servi en local
+
+**Plotly** était déjà dans le projet. Il produit des graphiques **interactifs** (survol, zoom) dans le navigateur **et** des images statiques pour le PDF, avec une seule bibliothèque. Les 9 types demandés sont natifs.
+
+**Alternatives.** *Matplotlib / Seaborn* : images statiques uniquement, pas d'interactivité dans le chat. *Recharts* (utilisé par le frontend React fourni) : uniquement dans le navigateur, donc impossible de générer le même graphique côté serveur pour le PDF. Le frontend devra afficher la figure Plotly (Phase 6).
+
+**plotly.js servi en local** (route `/vendor/plotly.min.js`). L'ancien lien CDN `plotly-latest` est figé depuis 2021 en **version 1.58.5**, alors que plotly 6.5.2 produit des figures pour plotly.js **3.3.1** (encodage binaire des tableaux, nouveaux attributs). On sert donc le fichier fourni avec le paquet Python : versions assorties, et **aucun besoin d'Internet**, ce qui va dans le même sens que le LLM local.
+
+## 34. Export PNG : kaleido + Chrome déjà installé
+
+**Pourquoi un PNG ?** Le PDF (Phase 8) ne peut pas contenir un graphique interactif : il faut une image.
+
+**kaleido 1.5.2** est la bibliothèque officielle d'export de Plotly. Depuis la version 1.0, elle **pilote un navigateur Chrome** au lieu d'embarquer son propre moteur (~80 Mo). Comme demandé, on utilise **le Chrome déjà installé** (`C:\Users\Lenovo\AppData\Local\Google\Chrome\Application\chrome.exe`, indiqué dans `.env` par `CHROME_PATH`) : aucune copie de Chrome n'est téléchargée.
+
+**Mesuré.**
+| Mode | 1er PNG | PNG suivants |
+|---|---|---|
+| Chrome relancé à chaque export (défaut) | ~4 s | ~4 s |
+| **Chrome persistant** (`kaleido.start_sync_server`, lancé au démarrage de Flask) | ~2 à 4,6 s | **~0,2 s** |
+
+**L'export se fait en arrière-plan** : la réponse du chat part tout de suite avec la figure interactive. Le PNG est écrit quelques dixièmes de seconde après, par un fil d'exécution unique (un seul Chrome, exports en file), puis son chemin est enregistré en base. Si l'export échoue, le PNG pourra être régénéré depuis le JSON au moment du PDF.
+
+**Alternatives.** *kaleido 0.2* (ancien, moteur embarqué) : non compatible avec plotly 6. *Orca* : abandonné. *Matplotlib* pour le PDF : il faudrait dessiner chaque graphique deux fois, avec deux rendus différents.
+
+**Arabe dans les images.** Vérifié visuellement : les titres arabes (« مجموع Total_Price حسب Region ») sont correctement liés et ordonnés de droite à gauche, car Chrome gère nativement le texte bidirectionnel.
+
+## 35. Table `graphiques` (migration 002)
+
+**Choix.** Une table dédiée : utilisateur, question, fichier, source (`chat` / `ml` / `simulation`), type, titre, **spec JSON**, chemin de la **figure JSON** et du **PNG**. Sauvegarde `mysqldump` vérifiée faite avant la migration, aucune ligne existante modifiée.
+
+**Pourquoi pas les colonnes `rapports.chemin_graphique` / `type_graphique` ?** Un rapport PDF regroupe **plusieurs** graphiques, une question peut en produire un, et les modèles ML de la Phase 5 en produiront aussi : c'est une relation 1-n, qu'une colonne ne peut pas représenter. Les colonnes de `rapports` restent disponibles pour le graphique principal d'un rapport.
+
+**Ce que la table permet.**
+- **Réafficher les graphiques dans l'historique** du chat (avant, l'historique n'affichait que du texte brut).
+- Retrouver **tous** les graphiques d'une conversation pour le PDF.
+- **Justifier** chaque graphique : la spec indique le type, les colonnes, l'agrégation, les filtres et la raison du choix.
+
+## 36. Graphiques de l'ancien format
+
+16 réponses de l'historique contenaient l'ancien JSON écrit par le LLM, dont 9 portaient sur des fichiers déjà supprimés.
+
+**Choix.** Les lignes en base **ne sont pas modifiées** : l'historique reste fidèle à ce qui a été répondu. À l'affichage :
+- le JSON est **retiré du texte**, et le texte explicatif autour est conservé (16 réponses sur 16 nettoyées) ;
+- un avertissement indique que ce graphique « avait été écrit par l'IA, sans calcul vérifié » ;
+- un bouton **« Régénérer avec le nouveau moteur »** renvoie la question d'origine, qui passe alors par pandas.
+
+**Pourquoi ne pas redessiner automatiquement les anciens JSON ?** Leurs valeurs étaient inventées : les afficher avec le nouveau moteur leur donnerait une fausse crédibilité. Les régénérer depuis la question d'origine produit, lui, des valeurs exactes.
+
+Le prompt du RAG interdit maintenant de produire un graphique ou du JSON : toutes les demandes de graphique passent par le moteur.
+
+## 37. Tout à la demande, rien d'automatique à l'upload
+
+**Choix.** Aucun graphique n'est produit à l'upload : uniquement quand l'utilisateur le demande dans le chat.
+
+**Pourquoi.**
+1. **Pertinence** : on ne sait pas, à l'upload, ce que l'utilisateur veut voir. Un graphique automatique choisirait des colonnes au hasard.
+2. **Ressources** : sur une machine de 8 Go, générer des graphiques (ou des prédictions) que personne ne regarde consomme du CPU pour rien.
+3. **Traçabilité** : chaque graphique est lié à la question qui l'a demandé (table `graphiques`).
+
+La Phase 7 affichera seulement un **aperçu** du fichier et des **questions suggérées** cliquables, qui mènent à des graphiques précis.
+
+## 38. Temps de génération d'un graphique
+
+**Protocole.** `tests/benchmark_graphiques.py` : 15 demandes (les 11 variantes, un type incompatible, l'arabe, deux demandes sans axe précisé), parcours complet `/ask_ia` sans le réseau, sur `sales_data` (1000 lignes), avec un préchauffage du LLM non mesuré. Résultats bruts : `mesures/phase4_graphiques.json`.
+
+**Avant / après** (« graphique du chiffre d'affaires par région ») :
+| | Avant (LLM + RAG) | Après (règles + pandas + Plotly) |
+|---|---|---|
+| Temps | **65 à 75 s** (prompt ~1 500 tokens) | **0,39 s** |
+| Données | 2 régions sur 5, valeurs inventées ❌ | 5 régions, sommes exactes ✅ |
+| Appels au LLM | 1 (génération du JSON) | **0** |
+
+**Détail par étape (moyenne sur les 14 demandes sans LLM) :**
+| Étape | Temps |
+|---|---|
+| Routage par règles | ~0 s |
+| Construction de la spec (règles) | 0,16 à 0,51 s |
+| Calcul pandas + figure Plotly | 0,06 à 0,48 s |
+| **Total de la réponse dans le chat** | **0,47 s en moyenne** (0,35 à 0,67 s) |
+| Taille de la figure envoyée au navigateur | 7,7 à 28,5 Ko |
+| Export PNG, 1er (Chrome démarre) | ~4 s (fait en arrière-plan, au démarrage de Flask) |
+| Export PNG, suivants | **~0,4 s** (en arrière-plan, n'allonge pas la réponse) |
+
+**Avec le LLM** (« graphique des ventes » : aucun axe précisé) : **~9 s**, dont ~9 s pour la spec du LLM, qui choisit seulement les colonnes. C'est le seul cas où le LLM intervient.
+
+**Optimisations trouvées grâce aux mesures.**
+- « Barres groupées / empilées » passaient par le routeur LLM (15 s), car la règle ne reconnaissait que « en barres » : tous les mots de type ont été ajoutés aux règles. Résultat : 0,46 s.
+- « Courbe des ventes » appelait le LLM (9 s) pour trouver l'axe X, alors qu'avec une colonne de dates il est évident : règle ajoutée. Résultat : 0,35 s.

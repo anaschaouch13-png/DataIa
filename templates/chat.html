@@ -1,7 +1,6 @@
 {% extends "base.html" %} {% block content %}
-<head>
-  <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
-</head>
+<!-- plotly.js 3.3.1 servi en local (assorti à plotly 6.5.2 ; fonctionne sans Internet) -->
+<script src="{{ url_for('plotly_js') }}"></script>
 
 <div class="container py-4">
   <div class="card shadow-sm border-0" style="border-radius: 15px">
@@ -42,7 +41,23 @@
           border-left: 4px solid #00d2d3;
         "
       >
-        {{ chat.reponse_texte }}
+        <div class="markdown-historique">{{ chat.reponse_texte }}</div>
+        {% if chat.ancien_graphique %}
+        <!-- Phase 4 : graphique de l'ancienne version (valeurs écrites par le LLM, non vérifiées) -->
+        <div class="alert alert-warning small mt-2 mb-0">
+          <i class="fas fa-exclamation-triangle me-1"></i>
+          Graphique de l'ancienne version : ses valeurs avaient été écrites par l'IA, sans calcul vérifié.
+          Il n'est plus affiché.
+          <button type="button" class="btn btn-sm btn-outline-dark ms-2 btn-regenerer"
+                  data-question="{{ chat.question_texte }}">
+            <i class="fas fa-sync-alt me-1"></i>Régénérer avec le nouveau moteur
+          </button>
+        </div>
+        {% endif %}
+        {% for figure in chat.figures %}
+        <div class="graphique-historique mt-2" style="width: 100%; height: 380px"
+             data-figure='{{ figure|tojson }}'></div>
+        {% endfor %}
       </div>
       {% endfor %} {% else %}
       <div id="empty-chat" class="text-center text-muted my-5">
@@ -83,8 +98,23 @@
 <script>
       const chatBox = document.getElementById('chat-box');
 
-      // 1. التمرير التلقائي عند فتح الصفحة
+      const CONFIG_PLOTLY = { responsive: true, displaylogo: false };
+
+      // 1. Au chargement : Markdown de l'historique, graphiques enregistrés, boutons « Régénérer »
       window.onload = function() {
+          document.querySelectorAll('.markdown-historique').forEach(el => {
+              el.innerHTML = marked.parse(el.textContent);
+          });
+          document.querySelectorAll('.graphique-historique').forEach(el => {
+              const figure = JSON.parse(el.dataset.figure);
+              Plotly.newPlot(el, figure.data, figure.layout, CONFIG_PLOTLY);
+          });
+          document.querySelectorAll('.btn-regenerer').forEach(bouton => {
+              bouton.addEventListener('click', () => {
+                  document.getElementById('user-input').value = bouton.dataset.question;
+                  sendMessage();
+              });
+          });
           chatBox.scrollTop = chatBox.scrollHeight;
       };
 
@@ -133,33 +163,11 @@
       .then(response => response.json())
       .then(data => {
           if (data.status === "success") {
-              let answer = data.answer.trim();
-
-              // 1. الرادار اللي يلوج على الـ JSON وسط النص
-              const jsonMatch = answer.match(/\{[\s\S]*"type_graph"[\s\S]*\}/);
-
-              if (jsonMatch) {
-                  try {
-                      // استخراج الـ JSON ورسم الغرافيك
-                      let graphConfig = JSON.parse(jsonMatch[0]);
-
-                      // مسح الـ JSON من النص باش ما يظهرش كتيبة خايبة للمستخدم
-                      let textPart = answer.replace(jsonMatch[0], "").trim();
-
-                      if (textPart) {
-                          loadingMsg.innerHTML = marked.parse(textPart);
-                      } else {
-                          loadingMsg.remove(); // لو مفيش نص، نحي الـ loading ونخلي الغرافيك بركة
-                      }
-
-                      renderPlotlyGraph(graphConfig);
-                  } catch (e) {
-                      console.error("Erreur JSON:", e);
-                      loadingMsg.innerHTML = marked.parse(answer);
-                  }
-              } else {
-                  // لو الإجابة نص عادي مفيهاش غرافيك
-                  loadingMsg.innerHTML = marked.parse(answer);
+              loadingMsg.innerHTML = marked.parse(data.answer.trim());
+              // Phase 4 : figure Plotly construite par le serveur à partir des données pandas
+              // (l'ancien format JSON écrit par le LLM dans le texte n'est plus utilisé)
+              if (data.graphique && data.graphique.figure) {
+                  afficherGraphique(loadingMsg, data.graphique.figure);
               }
               // Phase 3 : suggestions cliquables (ex. choix de la colonne quand « ventes » est ambigu)
               afficherSuggestions(loadingMsg, data.suggestions);
@@ -190,43 +198,16 @@
           conteneur.appendChild(zone);
       }
 
-      function renderPlotlyGraph(graphData) {
-          let graphId = 'graph-' + Date.now();
-          const graphDiv = document.createElement('div');
-          graphDiv.id = graphId;
-          graphDiv.style.width = '100%';
-          graphDiv.style.height = '350px';
-          graphDiv.className = 'mt-3 mb-3';
-
-          let botMsg = appendMessage('bot', "");
-          botMsg.innerHTML = "";
-          botMsg.appendChild(graphDiv);
-
-          let trace = {
-              x: graphData.data.x || graphData.data.labels,
-              y: graphData.data.y || graphData.data.values,
-              type: graphData.type_graph === 'pie' ? 'pie' : (graphData.type_graph === 'line' ? 'scatter' : 'bar'),
-              marker: { color: '#00d2d3' }
-          };
-
-          if(graphData.type_graph === 'pie') {
-              trace = {
-                  labels: graphData.data.x || graphData.data.labels,
-                  values: graphData.data.y || graphData.data.values,
-                  type: 'pie',
-                  hole: 0.4
-              };
-          }
-
-          const layout = {
-              title: { text: graphData.title },
-              margin: { t: 50, b: 50, l: 50, r: 50 },
-              paper_bgcolor: 'rgba(0,0,0,0)',
-              plot_bgcolor: 'rgba(0,0,0,0)',
-              autosize: true
-          };
-
-          Plotly.newPlot(graphId, [trace], layout, { responsive: true, displayModeBar: false });
+      // Phase 4 : affiche une figure Plotly complète (données calculées par pandas côté serveur).
+      // Remplace l'ancien renderPlotlyGraph qui dessinait les valeurs écrites par le LLM.
+      function afficherGraphique(conteneur, figure) {
+          const zone = document.createElement('div');
+          zone.className = 'mt-3 mb-2';
+          zone.style.width = '100%';
+          zone.style.height = '380px';
+          conteneur.appendChild(zone);
+          Plotly.newPlot(zone, figure.data, figure.layout, CONFIG_PLOTLY);
+          chatBox.scrollTo({ top: chatBox.scrollHeight, behavior: 'smooth' });
       }
 
       // تصليح الـ PDF: أضفنا async وغيرنا الـ ID لـ chat-box
